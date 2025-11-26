@@ -467,21 +467,29 @@ async def test_smb_connection(
     try:
         import smbclient
 
-        if not username.strip() or not password.strip():
-            return {"status": "error", "message": "Bitte Benutzername und Passwort angeben."}
-
-        # Normalize credentials (avoid trailing spaces that break auth)
+        host = host.strip()
+        share = share.strip()
         username = username.strip()
         password = password.strip()
         domain = domain.strip()
-        
+
+        if not host:
+            return {"status": "error", "message": "Bitte Host angeben."}
+        if not share:
+            return {"status": "error", "message": "Bitte Freigabe (Share) angeben."}
+        if not username or not password:
+            return {"status": "error", "message": "Bitte Benutzername und Passwort angeben."}
+
         # Clean up share name (remove leading slashes/backslashes)
         clean_share = share.replace("/", "").replace("\\", "")
         
         # Register session
-        # We wrap in try because if session exists we might want to reset it?
-        # Ideally we should clear session cache but smbclient doesn't expose that easily.
-        # We just try to register.
+        try:
+            # Reset cached sessions to avoid reusing anonymous/old auth
+            smbclient.reset_connection_cache()
+        except Exception:
+            pass
+
         try:
             smbclient.register_session(
                 host,
@@ -489,9 +497,8 @@ async def test_smb_connection(
                 password=password,
                 domain=domain if domain else None
             )
-        except Exception:
-            # Ignore session errors, maybe it works anyway or fails later
-            pass
+        except Exception as e:
+            return {"status": "error", "message": f"Anmeldung fehlgeschlagen: {e}"}
             
         # Try to list root of share
         path = f"\\\\{host}\\{clean_share}"

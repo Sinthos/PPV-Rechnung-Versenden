@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional, Union
 
 import msal
-import requests
+import requests # Import requests library
 
 from app.config import get_settings
 
@@ -117,7 +117,7 @@ class GraphMailService:
             "Kein gültiges TLS Zertifikatsbundle gefunden. "
             "Bitte certifi neu installieren oder einen gültigen Pfad in SSL_CERT_FILE/REQUESTS_CA_BUNDLE setzen."
         )
-    
+
     def _create_app(self) -> msal.ConfidentialClientApplication:
         """Create a new MSAL application instance."""
         # Ensure TLS CA bundle is valid before making any requests
@@ -138,10 +138,18 @@ class GraphMailService:
             )
             
         authority = f"https://login.microsoftonline.com/{self.tenant_id}"
+        
+        # Create a requests session and explicitly set trust_env to False
+        # This prevents requests from picking up system-wide proxy/auth settings (e.g., SPNEGO)
+        # that might interfere with MSAL's intended authentication flow.
+        session = requests.Session()
+        session.trust_env = False
+
         return msal.ConfidentialClientApplication(
             client_id=self.client_id,
             client_credential=self.client_secret,
             authority=authority,
+            http_client=session # Pass the custom session to MSAL
         )
     
     @property
@@ -387,7 +395,7 @@ def send_invoice_email(
         API response dict
         
     Raises:
-        GraphMailError: If sending fails or credentials are missing
+            GraphMailError: If sending fails or credentials are missing
     """
     # Prefer DB-configured mail service
     service = get_mail_service_from_db()

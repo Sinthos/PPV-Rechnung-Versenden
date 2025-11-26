@@ -144,6 +144,12 @@ class SMBFileSystem(FileSystemProvider):
         if not SMB_AVAILABLE:
             raise RuntimeError("smbclient library not installed")
 
+        host = (host or "").strip()
+        share = (share or "").strip()
+        username = (username or "").strip()
+        password = (password or "").strip()
+        domain = (domain or "").strip()
+
         if not host or not share:
             raise RuntimeError("SMB Host und Freigabe müssen gesetzt sein.")
         if not username or not password:
@@ -267,11 +273,11 @@ def get_filesystem(settings: dict) -> FileSystemProvider:
     
     if storage_type == "smb":
         return SMBFileSystem(
-            host=settings.get("smb_host", ""),
-            share=settings.get("smb_share", ""),
-            username=settings.get("smb_username", ""),
-            password=settings.get("smb_password", ""),
-            domain=settings.get("smb_domain", "")
+            host=(settings.get("smb_host") or "").strip(),
+            share=(settings.get("smb_share") or "").strip(),
+            username=(settings.get("smb_username") or "").strip(),
+            password=(settings.get("smb_password") or "").strip(),
+            domain=(settings.get("smb_domain") or "").strip()
         )
     else:
         return LocalFileSystem()

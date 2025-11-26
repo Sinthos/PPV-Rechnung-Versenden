@@ -271,6 +271,7 @@ class InvoiceProcessor:
         except Exception as e:
             logger.error(f"Failed to move {filename} to target folder: {e}")
             # Don't fail the whole operation, email was sent successfully
+            results["errors"].append(f"{filename}: Move failed - {e}")
         
         return "sent"
 

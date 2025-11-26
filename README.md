@@ -73,8 +73,8 @@ ppv-rechnung-versenden/
 
 ```bash
 # Repository klonen
-git clone https://github.com/your-org/ppv-rechnung-versenden.git
-cd ppv-rechnung-versenden
+git clone https://github.com/Sinthos/PPV-Rechnung-Versenden.git
+cd PPV-Rechnung-Versenden
 
 # Installer ausführen (als root)
 sudo bash install.sh
@@ -92,7 +92,7 @@ sudo mkdir -p /opt/ppv-rechnung
 cd /opt/ppv-rechnung
 
 # 3. Dateien kopieren/klonen
-git clone https://github.com/your-org/ppv-rechnung-versenden.git .
+git clone https://github.com/Sinthos/PPV-Rechnung-Versenden.git .
 
 # 4. Virtual Environment erstellen
 python3 -m venv venv

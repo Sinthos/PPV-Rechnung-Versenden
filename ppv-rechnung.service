@@ -1,6 +1,6 @@
 [Unit]
 Description=PPV Rechnung Versenden - Automated Invoice Email Service
-Documentation=https://github.com/your-org/ppv-rechnung-versenden
+Documentation=https://github.com/Sinthos/PPV-Rechnung-Versenden
 After=network-online.target
 Wants=network-online.target
 

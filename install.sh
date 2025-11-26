@@ -18,7 +18,7 @@ NC='\033[0m' # No Color
 # Configuration
 INSTALL_DIR="/opt/ppv-rechnung"
 SERVICE_NAME="ppv-rechnung"
-REPO_URL="https://github.com/your-org/ppv-rechnung-versenden.git"
+REPO_URL="https://github.com/Sinthos/PPV-Rechnung-Versenden.git"
 
 # Functions
 log_info() {

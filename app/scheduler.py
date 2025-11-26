@@ -281,9 +281,11 @@ class InvoiceProcessor:
             logger.error(f"Failed to move {filename} to target folder: {e}")
             # Don't fail the whole operation, email was sent successfully
             results["errors"].append(f"{filename}: Move failed - {e}")
-            # Persist warning on log entry so it is visible in UI
+            # Mark log entry as failed so UI and summary reflect the move problem
             if log_entry:
+                log_entry.status = "failed"
                 log_entry.error_message = f"Datei nicht verschoben: {e}"
+            return "failed"
         
         return "sent"
 

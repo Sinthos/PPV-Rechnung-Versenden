@@ -152,9 +152,9 @@ update_dependencies() {
     fi
     
     source venv/bin/activate
-    pip install --upgrade pip
+    pip install --upgrade pip setuptools wheel
     # Install dependencies (including new smbprotocol)
-    pip install -r requirements.txt
+    pip install --upgrade -r requirements.txt
     deactivate
     
     log_success "Dependencies updated"

@@ -129,8 +129,8 @@ setup_virtualenv() {
     
     log_info "Installing Python dependencies..."
     source venv/bin/activate
-    pip install --upgrade pip -q
-    pip install -r requirements.txt -q
+    pip install --upgrade pip setuptools wheel -q
+    pip install --upgrade -r requirements.txt -q
     deactivate
     
     log_success "Virtual environment created and dependencies installed"

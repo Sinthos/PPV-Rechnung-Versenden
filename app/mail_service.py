@@ -5,6 +5,8 @@ Sends emails with PDF attachments using Microsoft Graph API and MSAL.
 
 import base64
 import logging
+import os
+import ssl
 from pathlib import Path
 from typing import Optional, Union
 
@@ -72,9 +74,55 @@ class GraphMailService:
 
         self._app: Optional[msal.ConfidentialClientApplication] = None
         self._token_cache: Optional[dict] = None
+        self._ca_bundle: Optional[str] = None
+
+    def _ensure_ca_bundle(self) -> str:
+        """
+        Ensure we have a valid CA bundle path for requests/msal.
+        Falls back to system defaults if certifi path is missing.
+        """
+        # If an env override is present, validate it
+        for env_key in ("REQUESTS_CA_BUNDLE", "SSL_CERT_FILE"):
+            env_path = os.environ.get(env_key)
+            if env_path:
+                if Path(env_path).exists():
+                    return env_path
+                logger.warning(f"{env_key} points to missing CA bundle '{env_path}', falling back to defaults.")
+                os.environ.pop(env_key, None)
+
+        # Prefer certifi if available and the bundle exists
+        try:
+            import certifi
+            certifi_path = certifi.where()
+            if Path(certifi_path).exists():
+                os.environ.setdefault("REQUESTS_CA_BUNDLE", certifi_path)
+                return certifi_path
+            logger.warning(f"Certifi CA bundle not found at expected path: {certifi_path}")
+        except Exception as e:
+            logger.warning(f"Unable to load certifi CA bundle: {e}")
+
+        # Fallback to common system paths
+        fallback_paths = [
+            ssl.get_default_verify_paths().cafile,
+            "/etc/ssl/certs/ca-certificates.crt",
+            "/etc/ssl/cert.pem"
+        ]
+        for path in fallback_paths:
+            if path and Path(path).exists():
+                os.environ["REQUESTS_CA_BUNDLE"] = path
+                os.environ["SSL_CERT_FILE"] = path
+                return path
+
+        raise GraphMailError(
+            "Kein gültiges TLS Zertifikatsbundle gefunden. "
+            "Bitte certifi neu installieren oder einen gültigen Pfad in SSL_CERT_FILE/REQUESTS_CA_BUNDLE setzen."
+        )
     
     def _create_app(self) -> msal.ConfidentialClientApplication:
         """Create a new MSAL application instance."""
+        # Ensure TLS CA bundle is valid before making any requests
+        self._ca_bundle = self._ensure_ca_bundle()
+
         # Validate credentials before creating MSAL app
         if not self.tenant_id or not self.client_id or not self.client_secret:
             raise GraphMailError(
@@ -228,7 +276,8 @@ class GraphMailService:
                 endpoint,
                 headers=headers,
                 json=message,
-                timeout=30
+                timeout=30,
+                verify=self._ca_bundle or True
             )
             
             if response.status_code == 202:

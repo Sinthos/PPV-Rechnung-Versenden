@@ -96,9 +96,6 @@
             Zugangsdaten für den E-Mail-Versand über Microsoft 365. 
             <a href="https://portal.azure.com" target="_blank">Azure Portal öffnen</a>
         </p>
-        <div class="alert alert-warning" style="margin-bottom: 1rem;">
-            ⚠️ Hinweis: Die Web-UI ist jetzt mit Basic Auth geschützt. Zugangsdaten im .env setzen: ADMIN_USER / ADMIN_PASSWORD.
-        </div>
         
         <div class="form-row">
             <div class="form-group">
@@ -156,7 +153,7 @@
             🔍 Verbindung testen
         </button>
     </div>
-    
+
     <!-- Folder Settings -->
     <div class="card">
         <h3>📁 Speicher & Ordner</h3>
@@ -292,6 +289,38 @@
                 required
             >{{ settings.email_template }}</textarea>
             <span class="hint">Text der E-Mail (Betreff = Dateiname ohne .pdf)</span>
+        </div>
+    </div>
+
+    <!-- Admin Zugang -->
+    <div class="card">
+        <h3>🔑 Zugang zur Web-Oberfläche</h3>
+        <p class="hint">Ändern Sie hier Benutzername/Passwort für den UI-Zugang (Passwort wird gehasht gespeichert).</p>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label for="admin_user">Benutzername</label>
+                <input 
+                    type="text"
+                    id="admin_user"
+                    name="admin_user"
+                    value="{{ settings.admin_user }}"
+                    placeholder="admin"
+                >
+            </div>
+            <div class="form-group">
+                <label for="admin_password">Neues Passwort</label>
+                <input 
+                    type="password"
+                    id="admin_password"
+                    name="admin_password"
+                    placeholder="••••••••"
+                >
+                <span class="hint">Nur ausfüllen, wenn das Passwort geändert werden soll.</span>
+            </div>
+        </div>
+        <div class="alert alert-warning">
+            ⚠️ Bitte merken Sie sich Benutzername/Passwort. Ohne Passwort-Zeile bleibt das bestehende Passwort bestehen.
         </div>
     </div>
     

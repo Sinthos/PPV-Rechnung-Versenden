@@ -28,5 +28,9 @@ pydantic-settings==2.1.0
 # Timezone support
 pytz==2023.3
 
+# Security / hashing
+bcrypt==4.1.2
+cryptography==41.0.7
+
 # Network Storage (SMB)
 smbprotocol>=1.12.0,<2  # provides the top-level smbclient module

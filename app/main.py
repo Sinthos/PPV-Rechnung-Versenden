@@ -12,8 +12,9 @@ from pathlib import Path
 from typing import Optional
 from io import BytesIO
 import secrets
-
 import os
+
+import bcrypt
 from fastapi import FastAPI, Request, Depends, Form, HTTPException, status
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -22,7 +23,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.database import init_db, get_db
+from app.database import init_db, get_db, get_db_session
 from app.models import AppSettings, EmailLog
 from app.filesystem import get_filesystem
 from app.scheduler import (
@@ -35,6 +36,13 @@ from app.scheduler import (
 )
 from app.invoice_parser import parse_invoice, ZUGFeRDParseError
 from app.mail_service import get_mail_service, GraphMailService, GraphMailError
+from app.env_crypto import load_encrypted_env
+
+# Load encrypted env (if present) before reading settings
+try:
+    load_encrypted_env()
+except Exception as e:
+    logger.error(f"Failed to load encrypted env: {e}")
 
 # Configure logging
 logging.basicConfig(
@@ -110,11 +118,53 @@ def require_basic_auth(credentials: HTTPBasicCredentials = Depends(security)):
     If no credentials configured, allow (to avoid lockout).
     """
     settings = get_settings()
-    if not settings.admin_user or not settings.admin_password:
+
+    # Load DB credentials if present
+    db_user = ""
+    db_hash = ""
+    try:
+        with get_db_session() as db:
+            admin_creds = AppSettings.get_admin_credentials(db)
+            db_user = admin_creds.get("username", "") or ""
+            db_hash = admin_creds.get("password_hash", "") or ""
+    except Exception as e:
+        logger.warning(f"Could not load admin credentials from DB: {e}")
+
+    env_user = settings.admin_user or ""
+    env_pass = settings.admin_password or ""
+
+    # No credentials configured anywhere -> allow
+    if not (db_user and db_hash) and not (env_user and env_pass):
         return None
 
-    is_user = secrets.compare_digest(credentials.username or "", settings.admin_user)
-    is_pass = secrets.compare_digest(credentials.password or "", settings.admin_password)
+    # Prefer DB credentials if set
+    if db_user and db_hash:
+        if not credentials.username:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Unauthorized",
+                headers={"WWW-Authenticate": "Basic"},
+            )
+        if not secrets.compare_digest(credentials.username, db_user):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Unauthorized",
+                headers={"WWW-Authenticate": "Basic"},
+            )
+        try:
+            if bcrypt.checkpw((credentials.password or "").encode("utf-8"), db_hash.encode("utf-8")):
+                return credentials.username
+        except Exception as e:
+            logger.error(f"Error verifying admin password: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+    # Fallback to env credentials (plain compare)
+    is_user = secrets.compare_digest(credentials.username or "", env_user)
+    is_pass = secrets.compare_digest(credentials.password or "", env_pass)
     if not (is_user and is_pass):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -194,6 +244,8 @@ async def save_settings(
     client_id: str = Form(""),
     client_secret: str = Form(""),
     sender_address: str = Form(""),
+    admin_user: str = Form(""),
+    admin_password: str = Form(""),
     db: Session = Depends(get_db),
     user=Depends(require_basic_auth)
 ):
@@ -225,6 +277,15 @@ async def save_settings(
     # Validate email template
     if not email_template.strip():
         errors.append("E-Mail-Vorlage darf nicht leer sein")
+
+    # Validate admin credentials
+    admin_user_val = admin_user.strip()
+    admin_pass_val = admin_password.strip()
+    existing_admin_hash = AppSettings.get(db, AppSettings.KEY_ADMIN_PASSWORD_HASH, "") or ""
+    if admin_pass_val and not admin_user_val:
+        errors.append("Für das Admin-Passwort muss auch ein Benutzername angegeben werden")
+    if admin_user_val and not admin_pass_val and not existing_admin_hash:
+        errors.append("Bitte ein Admin-Passwort setzen")
     
     # Validate sender email format if provided
     if sender_address and not re.match(r'^[^@]+@[^@]+\.[^@]+$', sender_address):
@@ -261,6 +322,13 @@ async def save_settings(
         AppSettings.set(db, AppSettings.KEY_CLIENT_SECRET, client_secret.strip())
     if sender_address.strip():
         AppSettings.set(db, AppSettings.KEY_SENDER_ADDRESS, sender_address.strip())
+
+    # Save admin credentials (hashed password)
+    if admin_user_val:
+        AppSettings.set(db, AppSettings.KEY_ADMIN_USER, admin_user_val)
+    if admin_pass_val:
+        hashed = bcrypt.hashpw(admin_pass_val.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+        AppSettings.set(db, AppSettings.KEY_ADMIN_PASSWORD_HASH, hashed)
     
     db.commit()
     

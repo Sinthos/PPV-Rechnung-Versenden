@@ -115,6 +115,8 @@ class AppSettings(Base):
     KEY_SEND_TIME = "send_time"
     KEY_EMAIL_TEMPLATE = "email_template"
     KEY_SEND_PAST_DATES = "send_past_dates"
+    KEY_ADMIN_USER = "admin_user"
+    KEY_ADMIN_PASSWORD_HASH = "admin_password_hash"
     
     # Network Storage Settings (SMB)
     KEY_STORAGE_TYPE = "storage_type"  # 'local' or 'smb'
@@ -178,6 +180,7 @@ PPV Medien GmbH"""
             cls.KEY_SEND_TIME: cls.get(db, cls.KEY_SEND_TIME, settings.default_send_time),
             cls.KEY_EMAIL_TEMPLATE: cls.get(db, cls.KEY_EMAIL_TEMPLATE, cls.DEFAULT_EMAIL_TEMPLATE),
             cls.KEY_SEND_PAST_DATES: cls.get(db, cls.KEY_SEND_PAST_DATES, "false"),
+            cls.KEY_ADMIN_USER: cls.get(db, cls.KEY_ADMIN_USER, ""),
             # Storage settings
             cls.KEY_STORAGE_TYPE: cls.get(db, cls.KEY_STORAGE_TYPE, "local"),
             cls.KEY_SMB_HOST: cls.get(db, cls.KEY_SMB_HOST, ""),
@@ -202,6 +205,8 @@ PPV Medien GmbH"""
             cls.KEY_SEND_TIME: settings.default_send_time,
             cls.KEY_EMAIL_TEMPLATE: cls.DEFAULT_EMAIL_TEMPLATE,
             cls.KEY_SEND_PAST_DATES: "false",
+            cls.KEY_ADMIN_USER: "",
+            cls.KEY_ADMIN_PASSWORD_HASH: "",
             cls.KEY_STORAGE_TYPE: "local",
             # Don't initialize Microsoft settings from env - let user configure via GUI
         }
@@ -249,4 +254,12 @@ PPV Medien GmbH"""
             'client_id': get_valid_value(cls.KEY_CLIENT_ID, settings.client_id),
             'client_secret': get_valid_value(cls.KEY_CLIENT_SECRET, settings.client_secret),
             'sender_address': get_valid_value(cls.KEY_SENDER_ADDRESS, settings.sender_address),
+        }
+
+    @classmethod
+    def get_admin_credentials(cls, db: Session) -> dict:
+        """Get admin username and hashed password from DB (may be empty)."""
+        return {
+            "username": cls.get(db, cls.KEY_ADMIN_USER, "") or "",
+            "password_hash": cls.get(db, cls.KEY_ADMIN_PASSWORD_HASH, "") or "",
         }

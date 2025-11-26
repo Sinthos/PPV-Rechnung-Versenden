@@ -274,7 +274,8 @@ class SMBFileSystem(FileSystemProvider):
         dst_full = self._get_smb_path(dst)
         
         # Ensure dest dir exists
-        dst_dir = smbclient.path.dirname(dst_full)
+        # Use split to get directory since smbclient.path might not have dirname
+        dst_dir = "\\".join(dst_full.split("\\")[:-1])
         if not smbclient.path.exists(dst_dir):
             smbclient.makedirs(dst_dir)
         

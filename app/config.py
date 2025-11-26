@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = Field(default="INFO", description="Logging level")
     
+    # Admin access to web UI / API (HTTP Basic Auth)
+    admin_user: str = Field(default="", description="Basic Auth username for UI/API")
+    admin_password: str = Field(default="", description="Basic Auth password for UI/API")
+    
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

@@ -11,12 +11,14 @@ from datetime import datetime, date
 from pathlib import Path
 from typing import Optional
 from io import BytesIO
+import secrets
 
 import os
-from fastapi import FastAPI, Request, Depends, Form, HTTPException
+from fastapi import FastAPI, Request, Depends, Form, HTTPException, status
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -89,6 +91,7 @@ app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
 # Setup Jinja2 templates
 templates = Jinja2Templates(directory=APP_DIR / "templates")
 
+security = HTTPBasic()
 
 # Custom template filters
 def format_datetime(value: Optional[datetime]) -> str:
@@ -101,18 +104,38 @@ def format_datetime(value: Optional[datetime]) -> str:
 templates.env.filters["format_datetime"] = format_datetime
 
 
+def require_basic_auth(credentials: HTTPBasicCredentials = Depends(security)):
+    """
+    Require HTTP Basic Auth if admin credentials are configured.
+    If no credentials configured, allow (to avoid lockout).
+    """
+    settings = get_settings()
+    if not settings.admin_user or not settings.admin_password:
+        return None
+
+    is_user = secrets.compare_digest(credentials.username or "", settings.admin_user)
+    is_pass = secrets.compare_digest(credentials.password or "", settings.admin_password)
+    if not (is_user and is_pass):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return credentials.username
+
+
 # ============================================================================
 # Web UI Routes
 # ============================================================================
 
 @app.get("/", response_class=HTMLResponse)
-async def home(request: Request):
+async def home(request: Request, user=Depends(require_basic_auth)):
     """Redirect to settings page."""
     return RedirectResponse(url="/settings", status_code=302)
 
 
 @app.get("/settings", response_class=HTMLResponse)
-async def settings_page(request: Request, db: Session = Depends(get_db)):
+async def settings_page(request: Request, db: Session = Depends(get_db), user=Depends(require_basic_auth)):
     """Display settings page."""
     settings = AppSettings.get_all_settings(db)
     next_run = get_next_run_time()
@@ -171,7 +194,8 @@ async def save_settings(
     client_id: str = Form(""),
     client_secret: str = Form(""),
     sender_address: str = Form(""),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user=Depends(require_basic_auth)
 ):
     """Save settings from form."""
     errors = []
@@ -298,7 +322,7 @@ async def save_settings(
 
 
 @app.post("/run-now", response_class=HTMLResponse)
-async def trigger_run_now(request: Request):
+async def trigger_run_now(request: Request, user=Depends(require_basic_auth)):
     """Manually trigger invoice processing."""
     try:
         results = run_now()
@@ -319,7 +343,7 @@ async def trigger_run_now(request: Request):
 
 
 @app.get("/logs", response_class=HTMLResponse)
-async def logs_page(request: Request, db: Session = Depends(get_db)):
+async def logs_page(request: Request, db: Session = Depends(get_db), user=Depends(require_basic_auth)):
     """Display email logs page."""
     logs = EmailLog.get_recent(db, limit=100)
     
@@ -343,13 +367,13 @@ async def health_check():
 
 
 @app.get("/api/settings")
-async def get_api_settings(db: Session = Depends(get_db)):
+async def get_api_settings(db: Session = Depends(get_db), user=Depends(require_basic_auth)):
     """Get current settings via API."""
     return AppSettings.get_all_settings(db)
 
 
 @app.get("/api/logs")
-async def get_api_logs(limit: int = 100, db: Session = Depends(get_db)):
+async def get_api_logs(limit: int = 100, db: Session = Depends(get_db), user=Depends(require_basic_auth)):
     """Get email logs via API."""
     logs = EmailLog.get_recent(db, limit=min(limit, 100))
     return [
@@ -368,7 +392,7 @@ async def get_api_logs(limit: int = 100, db: Session = Depends(get_db)):
 
 
 @app.post("/api/run")
-async def api_run_now():
+async def api_run_now(user=Depends(require_basic_auth)):
     """Trigger invoice processing via API."""
     try:
         results = run_now()
@@ -378,7 +402,7 @@ async def api_run_now():
 
 
 @app.get("/api/next-run")
-async def api_next_run():
+async def api_next_run(user=Depends(require_basic_auth)):
     """Get next scheduled run time via API."""
     next_run = get_next_run_time()
     return {
@@ -388,7 +412,7 @@ async def api_next_run():
 
 
 @app.get("/api/invoice-preview")
-async def api_invoice_preview(db: Session = Depends(get_db)):
+async def api_invoice_preview(db: Session = Depends(get_db), user=Depends(require_basic_auth)):
     """
     Preview invoices in the configured source folder with their invoice dates.
     Used by the UI to show what will be sent.
@@ -457,7 +481,7 @@ async def api_invoice_preview(db: Session = Depends(get_db)):
 
 
 @app.get("/api/connection-test")
-async def api_connection_test(db: Session = Depends(get_db)):
+async def api_connection_test(db: Session = Depends(get_db), user=Depends(require_basic_auth)):
     """Test Microsoft Graph API connection."""
     try:
         ms_settings = AppSettings.get_microsoft_settings(db)
@@ -480,7 +504,8 @@ async def list_smb_shares(
     host: str = Form(...),
     username: str = Form(...),
     password: str = Form(...),
-    domain: str = Form("")
+    domain: str = Form(""),
+    user=Depends(require_basic_auth)
 ):
     """List available SMB shares on the host."""
     try:
@@ -535,7 +560,8 @@ async def test_smb_connection(
     share: str = Form(...),
     username: str = Form(...),
     password: str = Form(...),
-    domain: str = Form("")
+    domain: str = Form(""),
+    user=Depends(require_basic_auth)
 ):
     """Test SMB connection to a specific share."""
     try:
@@ -595,7 +621,7 @@ async def test_smb_connection(
 # ============================================================================
 
 @app.get("/api/browse")
-async def browse_folders(path: str = "/", db: Session = Depends(get_db)):
+async def browse_folders(path: str = "/", db: Session = Depends(get_db), user=Depends(require_basic_auth)):
     """
     Browse folders using the configured filesystem (Local or SMB).
     Returns list of directories at the given path.
@@ -641,7 +667,7 @@ async def browse_folders(path: str = "/", db: Session = Depends(get_db)):
 
 
 @app.post("/api/create-folder")
-async def create_folder(path: str = Form(...), db: Session = Depends(get_db)):
+async def create_folder(path: str = Form(...), db: Session = Depends(get_db), user=Depends(require_basic_auth)):
     """Create a new folder at the specified path using configured FS."""
     try:
         settings = AppSettings.get_all_settings(db)

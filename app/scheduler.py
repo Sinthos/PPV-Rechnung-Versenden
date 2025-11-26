@@ -75,6 +75,7 @@ class InvoiceProcessor:
             source_folder = app_settings[AppSettings.KEY_SOURCE_FOLDER]
             target_folder = app_settings[AppSettings.KEY_TARGET_FOLDER]
             email_template = app_settings[AppSettings.KEY_EMAIL_TEMPLATE]
+            send_past_dates = str(app_settings.get(AppSettings.KEY_SEND_PAST_DATES, "false")).lower() == "true"
             
             # Ensure target folder exists
             try:
@@ -114,7 +115,8 @@ class InvoiceProcessor:
                         target_folder=target_folder,
                         email_template=email_template,
                         today=today,
-                        force_send=force_send
+                        force_send=force_send,
+                        send_past_dates=send_past_dates
                     )
                     
                     if result == "sent":
@@ -147,7 +149,8 @@ class InvoiceProcessor:
         target_folder: str,
         email_template: str,
         today: date,
-        force_send: bool
+        force_send: bool,
+        send_past_dates: bool
     ) -> str:
         """
         Process a single invoice PDF.
@@ -202,9 +205,15 @@ class InvoiceProcessor:
                 logger.warning(f"No invoice date found in {filename}, skipping")
                 return "skipped"
             
-            if invoice_data.invoice_date != today:
+            # Only send if date is today or (optionally) in the past; always skip future unless force_send
+            if invoice_data.invoice_date > today:
                 logger.info(
-                    f"Invoice date {invoice_data.invoice_date} != today {today}, skipping {filename}"
+                    f"Invoice date {invoice_data.invoice_date} is in the future, skipping {filename}"
+                )
+                return "skipped"
+            if not send_past_dates and invoice_data.invoice_date != today:
+                logger.info(
+                    f"Invoice date {invoice_data.invoice_date} != today {today} and past sending disabled, skipping {filename}"
                 )
                 return "skipped"
         
@@ -240,7 +249,7 @@ class InvoiceProcessor:
             return "failed"
         
         # Log successful send
-        EmailLog.create(
+        log_entry = EmailLog.create(
             db=db,
             filename=filename,
             invoice_date=invoice_data.invoice_date_str,
@@ -272,6 +281,9 @@ class InvoiceProcessor:
             logger.error(f"Failed to move {filename} to target folder: {e}")
             # Don't fail the whole operation, email was sent successfully
             results["errors"].append(f"{filename}: Move failed - {e}")
+            # Persist warning on log entry so it is visible in UI
+            if log_entry:
+                log_entry.error_message = f"Datei nicht verschoben: {e}"
         
         return "sent"
 

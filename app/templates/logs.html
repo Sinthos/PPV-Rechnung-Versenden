@@ -31,7 +31,9 @@
                     <td>{{ log.recipient_email or '-' }}</td>
                     <td>{{ log.subject }}</td>
                     <td>
-                        {% if log.status == 'sent' %}
+                        {% if log.status == 'sent' and log.error_message %}
+                        <span class="badge badge-warning" title="{{ log.error_message }}">⚠️ Gesendet (Verschieben fehlgeschlagen)</span>
+                        {% elif log.status == 'sent' %}
                         <span class="badge badge-success">✅ Gesendet</span>
                         {% else %}
                         <span class="badge badge-error" title="{{ log.error_message or 'Unbekannter Fehler' }}">
@@ -40,11 +42,11 @@
                         {% endif %}
                     </td>
                 </tr>
-                {% if log.status == 'failed' and log.error_message %}
+                {% if (log.status == 'failed' and log.error_message) or (log.status == 'sent' and log.error_message) %}
                 <tr class="row-error-detail">
                     <td colspan="6">
                         <div class="error-detail">
-                            <strong>Fehler:</strong> {{ log.error_message }}
+                            <strong>Hinweis:</strong> {{ log.error_message }}
                         </div>
                     </td>
                 </tr>

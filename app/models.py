@@ -114,6 +114,7 @@ class AppSettings(Base):
     KEY_TARGET_FOLDER = "target_folder"
     KEY_SEND_TIME = "send_time"
     KEY_EMAIL_TEMPLATE = "email_template"
+    KEY_SEND_PAST_DATES = "send_past_dates"
     
     # Network Storage Settings (SMB)
     KEY_STORAGE_TYPE = "storage_type"  # 'local' or 'smb'
@@ -176,6 +177,7 @@ PPV Medien GmbH"""
             cls.KEY_TARGET_FOLDER: cls.get(db, cls.KEY_TARGET_FOLDER, settings.default_target_folder),
             cls.KEY_SEND_TIME: cls.get(db, cls.KEY_SEND_TIME, settings.default_send_time),
             cls.KEY_EMAIL_TEMPLATE: cls.get(db, cls.KEY_EMAIL_TEMPLATE, cls.DEFAULT_EMAIL_TEMPLATE),
+            cls.KEY_SEND_PAST_DATES: cls.get(db, cls.KEY_SEND_PAST_DATES, "false"),
             # Storage settings
             cls.KEY_STORAGE_TYPE: cls.get(db, cls.KEY_STORAGE_TYPE, "local"),
             cls.KEY_SMB_HOST: cls.get(db, cls.KEY_SMB_HOST, ""),
@@ -199,6 +201,7 @@ PPV Medien GmbH"""
             cls.KEY_TARGET_FOLDER: settings.default_target_folder,
             cls.KEY_SEND_TIME: settings.default_send_time,
             cls.KEY_EMAIL_TEMPLATE: cls.DEFAULT_EMAIL_TEMPLATE,
+            cls.KEY_SEND_PAST_DATES: "false",
             cls.KEY_STORAGE_TYPE: "local",
             # Don't initialize Microsoft settings from env - let user configure via GUI
         }

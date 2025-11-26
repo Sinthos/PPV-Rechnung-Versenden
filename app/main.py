@@ -158,6 +158,7 @@ async def save_settings(
     target_folder: str = Form(...),
     send_time: str = Form(...),
     email_template: str = Form(...),
+    send_past_dates: bool = Form(False),
     # SMB Settings
     storage_type: str = Form("local"),
     smb_host: str = Form(""),
@@ -216,6 +217,7 @@ async def save_settings(
     AppSettings.set(db, AppSettings.KEY_TARGET_FOLDER, target_folder.strip())
     AppSettings.set(db, AppSettings.KEY_SEND_TIME, send_time.strip())
     AppSettings.set(db, AppSettings.KEY_EMAIL_TEMPLATE, email_template)
+    AppSettings.set(db, AppSettings.KEY_SEND_PAST_DATES, "true" if send_past_dates else "false")
     
     # Save Storage settings
     AppSettings.set(db, AppSettings.KEY_STORAGE_TYPE, storage_type)

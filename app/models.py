@@ -210,7 +210,17 @@ PPV Medien GmbH"""
                 return db_val
             
             # Check environment value, ignoring placeholders
-            if env_value and "your-" not in env_value and "-here" not in env_value:
+            if env_value:
+                # Filter out standard placeholders
+                lower_val = env_value.lower()
+                if "your-" in lower_val and "-here" in lower_val:
+                    return ""
+                # Filter out likely unmodified placeholders
+                if "your-tenant-id" in lower_val or "your-client-id" in lower_val:
+                    return ""
+                if env_value == "rechnung@ppv-web.de":  # Default sender in example
+                    return ""
+                
                 return env_value
             
             return ""

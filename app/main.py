@@ -212,6 +212,54 @@ async def save_settings(
     # Reschedule the daily job with new time
     reschedule_daily_job(send_time.strip())
     
+    # Update .env in project root so systemd / external tools can use the same credentials
+    # (This does not replace DB settings; it only ensures the environment file is in sync if created from installer)
+    try:
+        project_root = Path(__file__).resolve().parents[1]
+        env_path = project_root / ".env"
+        # Load existing env key-values (keep comments and unknown lines intact)
+        existing_lines = []
+        if env_path.exists():
+            existing_lines = env_path.read_text(encoding="utf-8").splitlines()
+        env_map = {}
+        for line in existing_lines:
+            if '=' in line and not line.strip().startswith('#'):
+                k, v = line.split('=', 1)
+                env_map[k.strip()] = v.strip()
+        # Update values only if provided (non-empty)
+        if tenant_id.strip():
+            env_map['TENANT_ID'] = tenant_id.strip()
+        if client_id.strip():
+            env_map['CLIENT_ID'] = client_id.strip()
+        if client_secret.strip():
+            env_map['CLIENT_SECRET'] = client_secret.strip()
+        if sender_address.strip():
+            env_map['SENDER_ADDRESS'] = sender_address.strip()
+        # Ensure common keys exist (do not overwrite other keys)
+        # Rebuild file: keep original comments/order where possible, otherwise append missing keys
+        out_lines = []
+        seen = set()
+        for line in existing_lines:
+            if '=' in line and not line.strip().startswith('#'):
+                k, _ = line.split('=', 1)
+                key = k.strip()
+                if key in env_map:
+                    out_lines.append(f"{key}={env_map[key]}")
+                    seen.add(key)
+                else:
+                    out_lines.append(line)
+            else:
+                out_lines.append(line)
+        # Append any keys not present originally
+        for k, v in env_map.items():
+            if k not in seen:
+                out_lines.append(f"{k}={v}")
+        # Write back safely
+        env_path.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+        logger.info(f"Updated .env file at {env_path}")
+    except Exception as e:
+        logger.warning(f"Failed to update .env file: {e}")
+    
     return RedirectResponse(
         url="/settings?message=Einstellungen gespeichert",
         status_code=302

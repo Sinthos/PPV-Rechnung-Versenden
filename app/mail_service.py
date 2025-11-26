@@ -48,21 +48,44 @@ class GraphMailService:
         """
         self.env_settings = get_settings()
         
-        # Use provided values or fall back to environment
-        self.tenant_id = tenant_id or self.env_settings.tenant_id
-        self.client_id = client_id or self.env_settings.client_id
-        self.client_secret = client_secret or self.env_settings.client_secret
-        self.sender_address = sender_address or self.env_settings.sender_address
-        
+        # Use provided values if explicitly passed (even empty string means "explicitly set").
+        # If parameter is None, fall back to environment settings.
+        if tenant_id is not None:
+            self.tenant_id = tenant_id
+        else:
+            self.tenant_id = self.env_settings.tenant_id
+
+        if client_id is not None:
+            self.client_id = client_id
+        else:
+            self.client_id = self.env_settings.client_id
+
+        if client_secret is not None:
+            self.client_secret = client_secret
+        else:
+            self.client_secret = self.env_settings.client_secret
+
+        if sender_address is not None:
+            self.sender_address = sender_address
+        else:
+            self.sender_address = self.env_settings.sender_address
+
         self._app: Optional[msal.ConfidentialClientApplication] = None
         self._token_cache: Optional[dict] = None
     
     def _create_app(self) -> msal.ConfidentialClientApplication:
         """Create a new MSAL application instance."""
+        # Validate credentials before creating MSAL app
+        if not self.tenant_id or not self.client_id or not self.client_secret:
+            raise GraphMailError(
+                "Missing Microsoft Graph credentials (tenant_id, client_id, client_secret). "
+                "Please configure them in the web UI or .env."
+            )
+        authority = f"https://login.microsoftonline.com/{self.tenant_id}"
         return msal.ConfidentialClientApplication(
             client_id=self.client_id,
             client_credential=self.client_secret,
-            authority=f"https://login.microsoftonline.com/{self.tenant_id}",
+            authority=authority,
         )
     
     @property
@@ -245,8 +268,8 @@ def get_mail_service(tenant_id: str = None, client_id: str = None,
     """
     global _mail_service
     
-    if tenant_id and client_id and client_secret and sender_address:
-        # Create new instance with provided credentials
+    if tenant_id is not None and client_id is not None and client_secret is not None and sender_address is not None:
+        # Create new instance with provided credentials (allow empty strings to indicate explicit override)
         return GraphMailService(
             tenant_id=tenant_id,
             client_id=client_id,
@@ -283,6 +306,9 @@ def send_invoice_email(
     """
     Convenience function to send an invoice email.
     
+    This helper uses the database-configured credentials when available.
+    Falls back to environment settings only if no DB settings exist.
+    
     Args:
         to_email: Recipient email address
         pdf_path: Path to the invoice PDF
@@ -292,9 +318,17 @@ def send_invoice_email(
         API response dict
         
     Raises:
-        GraphMailError: If sending fails
+        GraphMailError: If sending fails or credentials are missing
     """
-    service = get_mail_service()
+    # Prefer DB-configured mail service
+    service = get_mail_service_from_db()
+    
+    # Validate that tenant_id and client_id are present
+    if not service.tenant_id or not service.client_id or not service.client_secret:
+        raise GraphMailError(
+            "Microsoft Graph credentials are not configured. "
+            "Please configure Tenant ID, Client ID and Client Secret in the web UI."
+        )
     
     # Use PDF filename without extension as subject
     subject = pdf_path.stem  # e.g., "RE-2025-12345"

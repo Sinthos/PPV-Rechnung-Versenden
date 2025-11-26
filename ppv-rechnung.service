@@ -31,7 +31,7 @@ SyslogIdentifier=ppv-rechnung
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/opt/ppv-rechnung/data
+ReadWritePaths=/opt/ppv-rechnung/data /opt/ppv-rechnung/.env
 
 # Resource limits (optional)
 # MemoryMax=512M

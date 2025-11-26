@@ -466,6 +466,14 @@ async def test_smb_connection(
     """Test SMB connection to a specific share."""
     try:
         import smbclient
+
+        if not username.strip() or not password.strip():
+            return {"status": "error", "message": "Bitte Benutzername und Passwort angeben."}
+
+        # Normalize credentials (avoid trailing spaces that break auth)
+        username = username.strip()
+        password = password.strip()
+        domain = domain.strip()
         
         # Clean up share name (remove leading slashes/backslashes)
         clean_share = share.replace("/", "").replace("\\", "")

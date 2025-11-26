@@ -143,6 +143,11 @@ class SMBFileSystem(FileSystemProvider):
     def __init__(self, host, share, username, password, domain=""):
         if not SMB_AVAILABLE:
             raise RuntimeError("smbclient library not installed")
+
+        if not host or not share:
+            raise RuntimeError("SMB Host und Freigabe müssen gesetzt sein.")
+        if not username or not password:
+            raise RuntimeError("SMB Benutzername und Passwort dürfen nicht leer sein.")
             
         self.host = host
         self.share = share

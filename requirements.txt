@@ -1,0 +1,28 @@
+# FastAPI and web server
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+jinja2==3.1.2
+aiofiles==23.2.1
+
+# Microsoft Graph API
+msal==1.25.0
+requests==2.31.0
+
+# PDF and XML processing
+pikepdf==8.10.1
+lxml==4.9.3
+
+# Database
+sqlalchemy==2.0.23
+
+# Scheduling
+apscheduler==3.10.4
+
+# Configuration
+python-dotenv==1.0.0
+pydantic==2.5.2
+pydantic-settings==2.1.0
+
+# Timezone support
+pytz==2023.3

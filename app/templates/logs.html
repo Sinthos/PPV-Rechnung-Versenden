@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% block title %}Protokoll - PPV Rechnung Versenden{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h2>📋 E-Mail Protokoll</h2>
+    <p class="subtitle">Letzte 100 versendete E-Mails</p>
+</div>
+
+{% if logs %}
+<div class="card">
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Zeitstempel</th>
+                    <th>Dateiname</th>
+                    <th>Rechnungsdatum</th>
+                    <th>Empfänger</th>
+                    <th>Betreff</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in logs %}
+                <tr class="{% if log.status == 'failed' %}row-error{% endif %}">
+                    <td class="nowrap">{{ log.timestamp|format_datetime }}</td>
+                    <td>{{ log.filename }}</td>
+                    <td>{{ log.invoice_date or '-' }}</td>
+                    <td>{{ log.recipient_email or '-' }}</td>
+                    <td>{{ log.subject }}</td>
+                    <td>
+                        {% if log.status == 'sent' %}
+                        <span class="badge badge-success">✅ Gesendet</span>
+                        {% else %}
+                        <span class="badge badge-error" title="{{ log.error_message or 'Unbekannter Fehler' }}">
+                            ❌ Fehler
+                        </span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% if log.status == 'failed' and log.error_message %}
+                <tr class="row-error-detail">
+                    <td colspan="6">
+                        <div class="error-detail">
+                            <strong>Fehler:</strong> {{ log.error_message }}
+                        </div>
+                    </td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="card">
+    <div class="empty-state">
+        <p>📭 Noch keine E-Mails versendet.</p>
+        <p class="hint">Sobald Rechnungen verarbeitet werden, erscheinen sie hier.</p>
+    </div>
+</div>
+{% endif %}
+
+<!-- Statistics -->
+{% if logs %}
+<div class="card">
+    <h3>📊 Statistik</h3>
+    <div class="stats-grid">
+        <div class="stat-box">
+            <span class="stat-value">{{ logs|length }}</span>
+            <span class="stat-label">Einträge gesamt</span>
+        </div>
+        <div class="stat-box stat-success">
+            <span class="stat-value">{{ logs|selectattr('status', 'equalto', 'sent')|list|length }}</span>
+            <span class="stat-label">Erfolgreich</span>
+        </div>
+        <div class="stat-box stat-error">
+            <span class="stat-value">{{ logs|selectattr('status', 'equalto', 'failed')|list|length }}</span>
+            <span class="stat-label">Fehlgeschlagen</span>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+
+{% block title %}Einstellungen - PPV Rechnung Versenden{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h2>⚙️ Einstellungen</h2>
+</div>
+
+{% if message %}
+<div class="alert alert-success">
+    ✅ {{ message }}
+</div>
+{% endif %}
+
+{% if error %}
+<div class="alert alert-error">
+    ❌ {{ error }}
+</div>
+{% endif %}
+
+<!-- Connection Status -->
+<div class="card">
+    <h3>🔌 Verbindungsstatus</h3>
+    {% if connection_status %}
+        {% if connection_status.status == 'connected' %}
+        <div class="status-box status-success">
+            <p><strong>✅ Microsoft Graph API verbunden</strong></p>
+            <p>Absender: {{ connection_status.sender }}</p>
+        </div>
+        {% else %}
+        <div class="status-box status-error">
+            <p><strong>❌ Verbindungsfehler</strong></p>
+            <p>{{ connection_status.message }}</p>
+            <p class="hint">Bitte prüfen Sie die Umgebungsvariablen in der .env Datei.</p>
+        </div>
+        {% endif %}
+    {% else %}
+    <div class="status-box status-warning">
+        <p>⚠️ Verbindungsstatus unbekannt</p>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Scheduler Status -->
+<div class="card">
+    <h3>⏰ Zeitplan</h3>
+    <div class="status-box">
+        {% if next_run %}
+        <p><strong>Nächste Ausführung:</strong> {{ next_run|format_datetime }}</p>
+        {% else %}
+        <p>⚠️ Scheduler nicht aktiv</p>
+        {% endif %}
+    </div>
+    
+    <form action="/run-now" method="post" class="inline-form">
+        <button type="submit" class="btn btn-primary">
+            🚀 Jetzt ausführen
+        </button>
+        <span class="hint">Verarbeitet alle Rechnungen im Quellordner (unabhängig vom Datum)</span>
+    </form>
+</div>
+
+<!-- Settings Form -->
+<div class="card">
+    <h3>📁 Ordner & Zeitplan</h3>
+    
+    <form action="/settings" method="post">
+        <div class="form-group">
+            <label for="source_folder">Quellordner (Rechnungen)</label>
+            <input 
+                type="text" 
+                id="source_folder" 
+                name="source_folder" 
+                value="{{ settings.source_folder }}"
+                placeholder="/Dokumente"
+                required
+            >
+            <span class="hint">Absoluter Pfad zum Ordner mit RE-*.pdf Dateien</span>
+        </div>
+        
+        <div class="form-group">
+            <label for="target_folder">Zielordner (Versendet)</label>
+            <input 
+                type="text" 
+                id="target_folder" 
+                name="target_folder" 
+                value="{{ settings.target_folder }}"
+                placeholder="/Dokumente/RE - Rechnung"
+                required
+            >
+            <span class="hint">Absoluter Pfad zum Ordner für versendete Rechnungen</span>
+        </div>
+        
+        <div class="form-group">
+            <label for="send_time">Tägliche Sendezeit</label>
+            <input 
+                type="time" 
+                id="send_time" 
+                name="send_time" 
+                value="{{ settings.send_time }}"
+                required
+            >
+            <span class="hint">Uhrzeit für die tägliche automatische Verarbeitung (Europe/Berlin)</span>
+        </div>
+        
+        <div class="form-group">
+            <label for="email_template">E-Mail-Vorlage</label>
+            <textarea 
+                id="email_template" 
+                name="email_template" 
+                rows="8"
+                required
+            >{{ settings.email_template }}</textarea>
+            <span class="hint">Text der E-Mail (Betreff = Dateiname ohne .pdf)</span>
+        </div>
+        
+        <div class="form-actions">
+            <button type="submit" class="btn btn-success">
+                💾 Einstellungen speichern
+            </button>
+        </div>
+    </form>
+</div>
+
+<!-- Info Box -->
+<div class="card card-info">
+    <h3>ℹ️ Hinweise</h3>
+    <ul>
+        <li>Rechnungen werden nur versendet, wenn das <strong>Rechnungsdatum = heute</strong> ist.</li>
+        <li>Die E-Mail-Adresse wird aus dem eingebetteten ZUGFeRD-XML der PDF extrahiert.</li>
+        <li>Nach erfolgreichem Versand wird die PDF in den Zielordner verschoben.</li>
+        <li>Bei Fehlern bleibt die PDF im Quellordner und wird beim nächsten Lauf erneut versucht.</li>
+        <li>Mit "Jetzt ausführen" werden alle Rechnungen versendet (unabhängig vom Datum).</li>
+    </ul>
+</div>
+{% endblock %}

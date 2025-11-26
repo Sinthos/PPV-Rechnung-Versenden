@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}PPV Rechnung Versenden{% endblock %}</title>
+    <link rel="stylesheet" href="/static/style.css">
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">
+            <h1>📧 PPV Rechnung Versenden</h1>
+        </div>
+        <ul class="nav-links">
+            <li><a href="/settings" class="{% if request.url.path == '/settings' %}active{% endif %}">⚙️ Einstellungen</a></li>
+            <li><a href="/logs" class="{% if request.url.path == '/logs' %}active{% endif %}">📋 Protokoll</a></li>
+        </ul>
+    </nav>
+
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="footer">
+        <p>PPV Rechnung Versenden v1.0.0 | &copy; {{ now().year if now is defined else 2024 }} PPV Medien GmbH</p>
+    </footer>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>

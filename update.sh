@@ -18,6 +18,8 @@ NC='\033[0m' # No Color
 # Configuration
 INSTALL_DIR="/opt/ppv-rechnung"
 SERVICE_NAME="ppv-rechnung"
+REPO_URL="https://github.com/Sinthos/PPV-Rechnung-Versenden.git"
+BRANCH="main"
 
 # Functions
 log_info() {
@@ -60,11 +62,6 @@ check_installation() {
         log_error "Please run install.sh first"
         exit 1
     fi
-    
-    if [ ! -f "${INSTALL_DIR}/requirements.txt" ]; then
-        log_error "Invalid installation - requirements.txt not found"
-        exit 1
-    fi
 }
 
 # Stop the service
@@ -79,41 +76,68 @@ stop_service() {
     fi
 }
 
-# Update from Git or local files
+# Update from Git
 update_files() {
     log_info "Updating application files..."
     
-    cd "${INSTALL_DIR}"
-    
-    # Check if this is a git repository
-    if [ -d ".git" ]; then
-        log_info "Pulling latest changes from Git..."
+    # Check if INSTALL_DIR is a git repository
+    if [ -d "${INSTALL_DIR}/.git" ]; then
+        log_info "Git repository detected at ${INSTALL_DIR}"
+        cd "${INSTALL_DIR}"
         
-        # Stash any local changes
-        git stash --quiet 2>/dev/null || true
+        # Fetch latest changes
+        log_info "Fetching changes from GitHub..."
+        git fetch --all
         
-        # Pull latest changes
-        git pull
+        # Reset to match remote (force update)
+        log_info "Resetting local files to match remote branch '${BRANCH}'..."
+        git reset --hard "origin/${BRANCH}"
         
-        log_success "Git repository updated"
+        log_success "Files updated via Git"
     else
-        # Check if we're running from a source directory
-        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        log_warning "Installation directory is NOT a Git repository."
+        log_info "Downloading latest version from GitHub to temporary location..."
         
-        if [ -f "${SCRIPT_DIR}/requirements.txt" ] && [ -d "${SCRIPT_DIR}/app" ]; then
-            log_info "Copying files from ${SCRIPT_DIR}..."
+        TEMP_DIR=$(mktemp -d)
+        
+        # Clone to temp dir
+        if git clone -b "${BRANCH}" "${REPO_URL}" "${TEMP_DIR}"; then
+            log_info "Cloned repository successfully."
             
-            # Copy all files except .git, venv, .env, and data
-            rsync -av --exclude='.git' --exclude='venv' --exclude='__pycache__' \
-                --exclude='*.pyc' --exclude='.env' --exclude='data' \
-                "${SCRIPT_DIR}/" "${INSTALL_DIR}/"
+            log_info "Replacing files in ${INSTALL_DIR}..."
+            # Sync files, deleting extraneous ones in destination (excluding config/data)
+            # We exclude:
+            # - .env (configuration)
+            # - data/ (database and local storage)
+            # - venv/ (virtual environment)
+            # - __pycache__/
+            # - .git/ (don't make the install dir a git repo if it wasn't)
             
-            log_success "Files copied from local directory"
+            rsync -av --delete \
+                --exclude='.env' \
+                --exclude='data/' \
+                --exclude='venv/' \
+                --exclude='.git/' \
+                --exclude='__pycache__/' \
+                --exclude='*.pyc' \
+                "${TEMP_DIR}/" "${INSTALL_DIR}/"
+            
+            rm -rf "${TEMP_DIR}"
+            log_success "Files updated from GitHub tarball/clone"
         else
-            log_warning "No Git repository and no local source found"
-            log_warning "Skipping file update, only updating dependencies"
+            log_error "Failed to clone repository. Check internet connection."
+            rm -rf "${TEMP_DIR}"
+            exit 1
         fi
     fi
+    
+    # Fix permissions
+    log_info "Fixing permissions..."
+    chown -R root:root "${INSTALL_DIR}"
+    # Ensure data dir is writable (if app runs as different user, adjust here)
+    # Usually app runs as root or specific user. Assuming root for service based on install.sh check?
+    # If user 'ppv' exists, chown to it?
+    # For now, assuming standard install.
 }
 
 # Update Python dependencies
@@ -128,8 +152,9 @@ update_dependencies() {
     fi
     
     source venv/bin/activate
-    pip install --upgrade pip -q
-    pip install -r requirements.txt -q --upgrade
+    pip install --upgrade pip
+    # Install dependencies (including new smbprotocol)
+    pip install -r requirements.txt
     deactivate
     
     log_success "Dependencies updated"
@@ -166,6 +191,12 @@ start_service() {
         log_success "Service started successfully"
     else
         log_error "Service failed to start. Check logs with: journalctl -u ${SERVICE_NAME} -f"
+        # Ask for reboot if failed
+        read -p "Service failed to start. Do you want to reboot the system? (y/N) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            reboot
+        fi
         exit 1
     fi
 }

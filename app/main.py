@@ -490,12 +490,14 @@ async def test_smb_connection(
         except Exception:
             pass
 
+        # Build username with optional domain prefix (DOMAIN\user)
+        reg_username = f"{domain}\\{username}" if domain else username
+
         try:
             smbclient.register_session(
                 host,
-                username=username,
+                username=reg_username,
                 password=password,
-                domain=domain if domain else None
             )
         except Exception as e:
             return {"status": "error", "message": f"Anmeldung fehlgeschlagen: {e}"}

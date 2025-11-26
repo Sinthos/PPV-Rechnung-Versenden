@@ -157,7 +157,8 @@ class SMBFileSystem(FileSystemProvider):
             
         self.host = host
         self.share = share
-        self.username = username
+        # Build username with optional domain prefix (DOMAIN\user)
+        self.username = f"{domain}\\{username}" if domain else username
         self.password = password
         self.domain = domain
         
@@ -166,9 +167,8 @@ class SMBFileSystem(FileSystemProvider):
         try:
             smbclient.register_session(
                 host, 
-                username=username, 
-                password=password,
-                domain=domain if domain else None
+                username=self.username, 
+                password=password
             )
         except Exception as e:
             logger.error(f"Failed to register SMB session: {e}")

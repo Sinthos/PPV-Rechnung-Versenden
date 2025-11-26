@@ -277,8 +277,15 @@ class SMBFileSystem(FileSystemProvider):
         dst_dir = smbclient.path.dirname(dst_full)
         if not smbclient.path.exists(dst_dir):
             smbclient.makedirs(dst_dir)
-            
-        smbclient.rename(src_full, dst_full)
+        
+        try:
+            smbclient.rename(src_full, dst_full)
+        except Exception as e:
+            logger.error(f"SMB rename failed {src_full} -> {dst_full}: {e}, trying copy/delete fallback.")
+            # Fallback: copy then delete
+            with smbclient.open_file(src_full, mode='rb') as src_f, smbclient.open_file(dst_full, mode='wb') as dst_f:
+                shutil.copyfileobj(src_f, dst_f)
+            smbclient.remove(src_full)
         
     def read_file(self, path: str) -> bytes:
         with smbclient.open_file(self._get_smb_path(path), mode='rb') as f:

@@ -388,6 +388,11 @@ body {
     color: var(--color-error);
 }
 
+.badge-warning {
+    background-color: var(--color-warning-light);
+    color: var(--color-warning);
+}
+
 /* ============================================================================
    Statistics
    ============================================================================ */
@@ -673,6 +678,63 @@ body {
     padding: 1rem;
     color: var(--color-error);
     text-align: center;
+}
+
+/* ============================================================================
+   Invoice Preview
+   ============================================================================ */
+.card-header-inline {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.invoice-list {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-card);
+    overflow: hidden;
+}
+
+.invoice-header,
+.invoice-row {
+    display: grid;
+    grid-template-columns: 1.2fr 0.9fr 1fr 1fr;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    align-items: center;
+}
+
+.invoice-header {
+    background: #f1f5f9;
+    font-weight: 600;
+    color: var(--color-text);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.invoice-row:nth-child(odd) {
+    background: #f8fafc;
+}
+
+.invoice-col.name {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.invoice-col.date,
+.invoice-col.recipient,
+.invoice-col.status {
+    font-size: 0.95rem;
+    color: var(--color-text-muted);
+}
+
+.badge-muted {
+    background: #e2e8f0;
+    color: #475569;
 }
 
 /* ============================================================================

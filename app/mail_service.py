@@ -129,6 +129,10 @@ class GraphMailService:
                 "Missing Microsoft Graph credentials (tenant_id, client_id, client_secret). "
                 "Please configure them in the web UI or .env."
             )
+        if not self.sender_address:
+            raise GraphMailError(
+                "Missing Absender-Adresse. Bitte unter Einstellungen > E-Mail Versand die Absender-Adresse eintragen."
+            )
             
         # Check for placeholders
         if "your-tenant-id" in self.tenant_id.lower() or "your-client-id" in self.client_id.lower():
@@ -277,6 +281,18 @@ class GraphMailService:
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json"
+        }
+
+        # Explicitly set From/Sender to enforce the configured Absender
+        message["message"]["from"] = {
+            "emailAddress": {
+                "address": self.sender_address
+            }
+        }
+        message["message"]["sender"] = {
+            "emailAddress": {
+                "address": self.sender_address
+            }
         }
         
         try:

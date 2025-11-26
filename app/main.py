@@ -7,9 +7,10 @@ import logging
 import re
 import sys
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, date
 from pathlib import Path
 from typing import Optional
+from io import BytesIO
 
 import os
 from fastapi import FastAPI, Request, Depends, Form, HTTPException
@@ -27,8 +28,10 @@ from app.scheduler import (
     stop_scheduler,
     reschedule_daily_job,
     run_now,
-    get_next_run_time
+    get_next_run_time,
+    TIMEZONE
 )
+from app.invoice_parser import parse_invoice, ZUGFeRDParseError
 from app.mail_service import get_mail_service, GraphMailService, GraphMailError
 
 # Configure logging
@@ -379,6 +382,75 @@ async def api_next_run():
     return {
         "next_run": next_run.isoformat() if next_run else None,
         "timezone": "Europe/Berlin"
+    }
+
+
+@app.get("/api/invoice-preview")
+async def api_invoice_preview(db: Session = Depends(get_db)):
+    """
+    Preview invoices in the configured source folder with their invoice dates.
+    Used by the UI to show what will be sent.
+    """
+    settings = AppSettings.get_all_settings(db)
+    fs = get_filesystem(settings)
+    source_folder = settings.get(AppSettings.KEY_SOURCE_FOLDER, "")
+
+    if not source_folder:
+        raise HTTPException(status_code=400, detail="Quellordner ist nicht konfiguriert.")
+
+    try:
+        invoice_files = fs.list_files(source_folder, pattern="RE-*.pdf")
+    except Exception as e:
+        logger.error(f"Preview: failed to list files in {source_folder}: {e}")
+        raise HTTPException(status_code=500, detail=f"Fehler beim Auflisten des Quellordners: {e}")
+
+    today = datetime.now(TIMEZONE).date()
+    items = []
+
+    for file_path in sorted(invoice_files):
+        filename = os.path.basename(file_path)
+        item = {
+            "filename": filename,
+            "path": file_path,
+            "status": "unknown",
+            "invoice_date": "",
+            "recipient": ""
+        }
+
+        try:
+            pdf_bytes = fs.read_file(file_path)
+            invoice_data = parse_invoice(BytesIO(pdf_bytes), filename=filename)
+
+            item["invoice_date"] = invoice_data.invoice_date_str
+            item["recipient"] = invoice_data.recipient_email or ""
+
+            if invoice_data.invoice_date:
+                days_until = (invoice_data.invoice_date - today).days
+                item["days_until"] = days_until
+
+                if days_until == 0:
+                    item["status"] = "today"
+                elif days_until > 0:
+                    item["status"] = "future"
+                else:
+                    item["status"] = "past"
+            else:
+                item["status"] = "no_date"
+
+        except ZUGFeRDParseError as e:
+            item["status"] = "parse_error"
+            item["error"] = str(e)
+        except Exception as e:
+            item["status"] = "error"
+            item["error"] = str(e)
+
+        items.append(item)
+
+    return {
+        "status": "success",
+        "source_folder": source_folder,
+        "count": len(items),
+        "items": items,
     }
 
 

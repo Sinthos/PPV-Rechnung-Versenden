@@ -67,6 +67,25 @@
     </form>
 </div>
 
+<!-- Invoice Preview -->
+<div class="card">
+    <div class="card-header-inline">
+        <div>
+            <h3>📄 Anstehende Rechnungen</h3>
+            <p class="hint">Zeigt gefundene RE-*.pdf im Quellordner mit Rechnungsdatum. Aktualisiert beim Laden und alle 5 Minuten.</p>
+        </div>
+        <button type="button" class="btn btn-secondary" onclick="loadInvoicePreview(true)">
+            🔄 Aktualisieren
+        </button>
+    </div>
+    <div id="invoicePreviewStatus" class="status-box" style="margin-bottom: 0.75rem;">
+        Lade Vorschau...
+    </div>
+    <div id="invoicePreviewList" class="invoice-list">
+        <div class="loading">Lade Rechnungen...</div>
+    </div>
+</div>
+
 <!-- Settings Form -->
 <form action="/settings" method="post" id="settingsForm">
     
@@ -322,6 +341,7 @@
 let currentBrowserPath = '/';
 let targetInputId = null;
 let parentPath = null;
+let invoicePreviewTimer = null;
 
 function openFolderBrowser(inputId) {
     targetInputId = inputId;
@@ -517,6 +537,103 @@ document.getElementById('folderBrowserModal').addEventListener('click', function
     }
 });
 
+function describeInvoiceStatus(item) {
+    if (item.status === 'today') return 'Heute (wird gesendet)';
+    if (item.status === 'future') {
+        const days = item.days_until || 0;
+        return days === 1 ? 'Morgen' : `In ${days} Tagen`;
+    }
+    if (item.status === 'past') return 'Datum in der Vergangenheit';
+    if (item.status === 'no_date') return 'Kein Rechnungsdatum gefunden';
+    if (item.status === 'parse_error') return 'Lesefehler (ZUGFeRD)';
+    if (item.status === 'error') return item.error || 'Unbekannter Fehler';
+    return 'Unbekannter Status';
+}
+
+function badgeClassForStatus(status) {
+    if (status === 'today') return 'badge badge-success';
+    if (status === 'future') return 'badge badge-warning';
+    if (status === 'past') return 'badge badge-error';
+    if (status === 'no_date' || status === 'parse_error' || status === 'error') return 'badge badge-muted';
+    return 'badge';
+}
+
+function renderInvoicePreview(data) {
+    const statusEl = document.getElementById('invoicePreviewStatus');
+    const listEl = document.getElementById('invoicePreviewList');
+
+    if (!data || data.status !== 'success') {
+        statusEl.innerHTML = '❌ Vorschau nicht verfügbar.';
+        listEl.innerHTML = '<div class="error-message">Keine Daten geladen.</div>';
+        return;
+    }
+
+    const nowText = new Date().toLocaleTimeString('de-DE');
+    statusEl.innerHTML = `<strong>Quelle:</strong> ${data.source_folder || '-'} &nbsp; • &nbsp; <strong>Aktualisiert:</strong> ${nowText}`;
+
+    if (!data.items || data.items.length === 0) {
+        listEl.innerHTML = '<div class="empty-folder">Keine RE-*.pdf im Quellordner gefunden.</div>';
+        return;
+    }
+
+    const rows = data.items.map(item => {
+        const dueText = describeInvoiceStatus(item);
+        const badgeCls = badgeClassForStatus(item.status);
+        const dateText = item.invoice_date || '-';
+        const recipient = item.recipient || '-';
+        return `
+            <div class="invoice-row">
+                <div class="invoice-col name" title="${item.path || ''}">${item.filename}</div>
+                <div class="invoice-col date">${dateText}</div>
+                <div class="invoice-col recipient">${recipient}</div>
+                <div class="invoice-col status"><span class="${badgeCls}">${dueText}</span></div>
+            </div>
+        `;
+    }).join('');
+
+    listEl.innerHTML = `
+        <div class="invoice-header">
+            <div class="invoice-col name">Datei</div>
+            <div class="invoice-col date">Rechnungsdatum</div>
+            <div class="invoice-col recipient">Empfänger</div>
+            <div class="invoice-col status">Fällig</div>
+        </div>
+        ${rows}
+    `;
+}
+
+function loadInvoicePreview(showSpinner = false) {
+    const listEl = document.getElementById('invoicePreviewList');
+    if (showSpinner) {
+        listEl.innerHTML = '<div class="loading">Lade Rechnungen...</div>';
+    }
+
+    fetch('/api/invoice-preview')
+        .then(response => {
+            if (!response.ok) {
+                return response.json().then(data => {
+                    throw new Error(data.detail || 'Fehler beim Laden');
+                }).catch(() => {
+                    throw new Error('Fehler beim Laden');
+                });
+            }
+            return response.json();
+        })
+        .then(data => renderInvoicePreview(data))
+        .catch(error => {
+            document.getElementById('invoicePreviewStatus').innerHTML = '❌ Vorschau nicht verfügbar.';
+            listEl.innerHTML = `<div class="error-message">❌ ${error.message}</div>`;
+        });
+}
+
+function startInvoicePreviewAutoRefresh() {
+    loadInvoicePreview(true);
+    if (invoicePreviewTimer) {
+        clearInterval(invoicePreviewTimer);
+    }
+    invoicePreviewTimer = setInterval(loadInvoicePreview, 5 * 60 * 1000); // every 5 minutes
+}
+
 function toggleStorageSettings() {
     const type = document.querySelector('input[name="storage_type"]:checked').value;
     const smbSettings = document.getElementById('smbSettings');
@@ -529,5 +646,6 @@ function toggleStorageSettings() {
 
 // Initial state
 toggleStorageSettings();
+startInvoicePreviewAutoRefresh();
 </script>
 {% endblock %}

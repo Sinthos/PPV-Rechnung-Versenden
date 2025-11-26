@@ -174,6 +174,14 @@ class SMBFileSystem(FileSystemProvider):
             logger.error(f"Failed to register SMB session: {e}")
             raise
 
+    def _join_unc(self, base: str, name: str) -> str:
+        """Join UNC paths without relying on smbclient.path.join (not available)."""
+        base_clean = base.rstrip("\\")
+        name_clean = name.lstrip("\\")
+        if not base_clean:
+            return name_clean
+        return f"{base_clean}\\{name_clean}"
+
     def _normalize_rel_path(self, path: str) -> str:
         """Return a clean relative path without leading slashes."""
         if path is None:
@@ -204,7 +212,7 @@ class SMBFileSystem(FileSystemProvider):
         result = []
         try:
             for filename in smbclient.listdir(full_path):
-                file_path = smbclient.path.join(full_path, filename)
+                file_path = self._join_unc(full_path, filename)
                 if smbclient.path.isdir(file_path):
                     # Keep relative path so browser can drill down
                     next_rel = f"{rel_path}/{filename}" if rel_path else filename

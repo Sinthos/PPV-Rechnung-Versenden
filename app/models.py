@@ -160,16 +160,19 @@ PPV Medien GmbH"""
         """Get all settings as a dictionary with defaults applied."""
         settings = get_settings()
         
+        # Use helper method to filter placeholders for MS settings
+        ms_settings = cls.get_microsoft_settings(db)
+        
         return {
             cls.KEY_SOURCE_FOLDER: cls.get(db, cls.KEY_SOURCE_FOLDER, settings.default_source_folder),
             cls.KEY_TARGET_FOLDER: cls.get(db, cls.KEY_TARGET_FOLDER, settings.default_target_folder),
             cls.KEY_SEND_TIME: cls.get(db, cls.KEY_SEND_TIME, settings.default_send_time),
             cls.KEY_EMAIL_TEMPLATE: cls.get(db, cls.KEY_EMAIL_TEMPLATE, cls.DEFAULT_EMAIL_TEMPLATE),
-            # Microsoft Graph settings - use DB value if set, otherwise fall back to env
-            cls.KEY_TENANT_ID: cls.get(db, cls.KEY_TENANT_ID, settings.tenant_id),
-            cls.KEY_CLIENT_ID: cls.get(db, cls.KEY_CLIENT_ID, settings.client_id),
-            cls.KEY_CLIENT_SECRET: cls.get(db, cls.KEY_CLIENT_SECRET, settings.client_secret),
-            cls.KEY_SENDER_ADDRESS: cls.get(db, cls.KEY_SENDER_ADDRESS, settings.sender_address),
+            # Microsoft Graph settings
+            cls.KEY_TENANT_ID: ms_settings['tenant_id'],
+            cls.KEY_CLIENT_ID: ms_settings['client_id'],
+            cls.KEY_CLIENT_SECRET: ms_settings['client_secret'],
+            cls.KEY_SENDER_ADDRESS: ms_settings['sender_address'],
         }
     
     @classmethod
@@ -194,11 +197,27 @@ PPV Medien GmbH"""
     
     @classmethod
     def get_microsoft_settings(cls, db: Session) -> dict:
-        """Get Microsoft Graph API settings from database."""
+        """
+        Get Microsoft Graph API settings from database.
+        Filters out placeholder values from environment variables.
+        """
         settings = get_settings()
+        
+        def get_valid_value(db_key, env_value):
+            # Check DB value first
+            db_val = cls.get(db, db_key)
+            if db_val and db_val.strip():
+                return db_val
+            
+            # Check environment value, ignoring placeholders
+            if env_value and "your-" not in env_value and "-here" not in env_value:
+                return env_value
+            
+            return ""
+
         return {
-            'tenant_id': cls.get(db, cls.KEY_TENANT_ID) or settings.tenant_id,
-            'client_id': cls.get(db, cls.KEY_CLIENT_ID) or settings.client_id,
-            'client_secret': cls.get(db, cls.KEY_CLIENT_SECRET) or settings.client_secret,
-            'sender_address': cls.get(db, cls.KEY_SENDER_ADDRESS) or settings.sender_address,
+            'tenant_id': get_valid_value(cls.KEY_TENANT_ID, settings.tenant_id),
+            'client_id': get_valid_value(cls.KEY_CLIENT_ID, settings.client_id),
+            'client_secret': get_valid_value(cls.KEY_CLIENT_SECRET, settings.client_secret),
+            'sender_address': get_valid_value(cls.KEY_SENDER_ADDRESS, settings.sender_address),
         }

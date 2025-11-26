@@ -11,8 +11,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import os
 from fastapi import FastAPI, Request, Depends, Form, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -27,7 +28,7 @@ from app.scheduler import (
     run_now,
     get_next_run_time
 )
-from app.mail_service import get_mail_service, GraphMailError
+from app.mail_service import get_mail_service, GraphMailService, GraphMailError
 
 # Configure logging
 logging.basicConfig(
@@ -112,15 +113,26 @@ async def settings_page(request: Request, db: Session = Depends(get_db)):
     settings = AppSettings.get_all_settings(db)
     next_run = get_next_run_time()
     
-    # Test Graph API connection
+    # Test Graph API connection using DB settings
     connection_status = None
-    try:
-        mail_service = get_mail_service()
-        connection_status = mail_service.test_connection()
-    except GraphMailError as e:
-        connection_status = {"status": "error", "message": str(e)}
-    except Exception as e:
-        connection_status = {"status": "error", "message": f"Configuration error: {e}"}
+    ms_settings = AppSettings.get_microsoft_settings(db)
+    
+    # Check if credentials are configured
+    if ms_settings['tenant_id'] and ms_settings['client_id'] and ms_settings['client_secret']:
+        try:
+            mail_service = GraphMailService(
+                tenant_id=ms_settings['tenant_id'],
+                client_id=ms_settings['client_id'],
+                client_secret=ms_settings['client_secret'],
+                sender_address=ms_settings['sender_address']
+            )
+            connection_status = mail_service.test_connection()
+        except GraphMailError as e:
+            connection_status = {"status": "error", "message": str(e)}
+        except Exception as e:
+            connection_status = {"status": "error", "message": f"Configuration error: {e}"}
+    else:
+        connection_status = {"status": "not_configured", "message": "Microsoft Graph API Zugangsdaten nicht konfiguriert"}
     
     return templates.TemplateResponse(
         "settings.html",
@@ -142,6 +154,10 @@ async def save_settings(
     target_folder: str = Form(...),
     send_time: str = Form(...),
     email_template: str = Form(...),
+    tenant_id: str = Form(""),
+    client_id: str = Form(""),
+    client_secret: str = Form(""),
+    sender_address: str = Form(""),
     db: Session = Depends(get_db)
 ):
     """Save settings from form."""
@@ -165,17 +181,32 @@ async def save_settings(
     if not email_template.strip():
         errors.append("E-Mail-Vorlage darf nicht leer sein")
     
+    # Validate sender email format if provided
+    if sender_address and not re.match(r'^[^@]+@[^@]+\.[^@]+$', sender_address):
+        errors.append("Absender E-Mail-Adresse ist ungültig")
+    
     if errors:
         return RedirectResponse(
             url=f"/settings?error={'; '.join(errors)}",
             status_code=302
         )
     
-    # Save settings
+    # Save folder and schedule settings
     AppSettings.set(db, AppSettings.KEY_SOURCE_FOLDER, source_folder.strip())
     AppSettings.set(db, AppSettings.KEY_TARGET_FOLDER, target_folder.strip())
     AppSettings.set(db, AppSettings.KEY_SEND_TIME, send_time.strip())
     AppSettings.set(db, AppSettings.KEY_EMAIL_TEMPLATE, email_template)
+    
+    # Save Microsoft Graph settings (only if provided)
+    if tenant_id.strip():
+        AppSettings.set(db, AppSettings.KEY_TENANT_ID, tenant_id.strip())
+    if client_id.strip():
+        AppSettings.set(db, AppSettings.KEY_CLIENT_ID, client_id.strip())
+    if client_secret.strip():
+        AppSettings.set(db, AppSettings.KEY_CLIENT_SECRET, client_secret.strip())
+    if sender_address.strip():
+        AppSettings.set(db, AppSettings.KEY_SENDER_ADDRESS, sender_address.strip())
+    
     db.commit()
     
     # Reschedule the daily job with new time
@@ -278,13 +309,105 @@ async def api_next_run():
 
 
 @app.get("/api/connection-test")
-async def api_connection_test():
+async def api_connection_test(db: Session = Depends(get_db)):
     """Test Microsoft Graph API connection."""
     try:
-        mail_service = get_mail_service()
+        ms_settings = AppSettings.get_microsoft_settings(db)
+        mail_service = GraphMailService(
+            tenant_id=ms_settings['tenant_id'],
+            client_id=ms_settings['client_id'],
+            client_secret=ms_settings['client_secret'],
+            sender_address=ms_settings['sender_address']
+        )
         result = mail_service.test_connection()
         return {"status": "success", "details": result}
     except GraphMailError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Configuration error: {e}")
+
+
+# ============================================================================
+# Folder Browser API
+# ============================================================================
+
+@app.get("/api/browse")
+async def browse_folders(path: str = "/"):
+    """
+    Browse folders on the server filesystem.
+    Returns list of directories at the given path.
+    """
+    try:
+        # Normalize and validate path
+        browse_path = Path(path).resolve()
+        
+        # Security: Don't allow browsing certain system directories
+        forbidden_paths = ['/proc', '/sys', '/dev', '/run']
+        if any(str(browse_path).startswith(fp) for fp in forbidden_paths):
+            raise HTTPException(status_code=403, detail="Zugriff auf diesen Pfad nicht erlaubt")
+        
+        if not browse_path.exists():
+            raise HTTPException(status_code=404, detail="Pfad existiert nicht")
+        
+        if not browse_path.is_dir():
+            raise HTTPException(status_code=400, detail="Pfad ist kein Verzeichnis")
+        
+        # Get parent path
+        parent_path = str(browse_path.parent) if browse_path != browse_path.parent else None
+        
+        # List directories
+        directories = []
+        try:
+            for item in sorted(browse_path.iterdir()):
+                if item.is_dir() and not item.name.startswith('.'):
+                    try:
+                        # Check if we can access the directory
+                        list(item.iterdir())
+                        directories.append({
+                            "name": item.name,
+                            "path": str(item),
+                            "has_children": any(p.is_dir() for p in item.iterdir() if not p.name.startswith('.'))
+                        })
+                    except PermissionError:
+                        # Include but mark as inaccessible
+                        directories.append({
+                            "name": item.name,
+                            "path": str(item),
+                            "has_children": False,
+                            "access_denied": True
+                        })
+        except PermissionError:
+            raise HTTPException(status_code=403, detail="Keine Berechtigung für diesen Ordner")
+        
+        return {
+            "current_path": str(browse_path),
+            "parent_path": parent_path,
+            "directories": directories
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error browsing path {path}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/create-folder")
+async def create_folder(path: str = Form(...)):
+    """Create a new folder at the specified path."""
+    try:
+        folder_path = Path(path).resolve()
+        
+        # Security check
+        forbidden_paths = ['/proc', '/sys', '/dev', '/run', '/etc', '/bin', '/sbin', '/usr']
+        if any(str(folder_path).startswith(fp) for fp in forbidden_paths):
+            raise HTTPException(status_code=403, detail="Ordner kann hier nicht erstellt werden")
+        
+        folder_path.mkdir(parents=True, exist_ok=True)
+        
+        return {"status": "success", "path": str(folder_path)}
+        
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Keine Berechtigung zum Erstellen des Ordners")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

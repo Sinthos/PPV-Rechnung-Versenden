@@ -23,7 +23,7 @@ from app.invoice_parser import (
     ZUGFeRDParseError,
     InvoiceData
 )
-from app.mail_service import send_invoice_email, GraphMailError
+from app.mail_service import GraphMailService, GraphMailError
 
 logger = logging.getLogger(__name__)
 
@@ -178,12 +178,22 @@ class InvoiceProcessor:
                 )
                 return "skipped"
         
+        # Get mail service with current DB settings
+        ms_settings = AppSettings.get_microsoft_settings(db)
+        mail_service = GraphMailService(
+            tenant_id=ms_settings['tenant_id'],
+            client_id=ms_settings['client_id'],
+            client_secret=ms_settings['client_secret'],
+            sender_address=ms_settings['sender_address']
+        )
+        
         # Send the email
         try:
-            send_invoice_email(
+            mail_service.send_email(
                 to_email=invoice_data.recipient_email,
-                pdf_path=pdf_path,
-                email_template=email_template
+                subject=pdf_path.stem,
+                body=email_template,
+                attachment_path=pdf_path
             )
         except GraphMailError as e:
             logger.error(f"Failed to send email for {filename}: {e}")

@@ -13,12 +13,21 @@ from typing import Optional
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
     
-    # Microsoft Graph API Configuration
-    tenant_id: str = Field(..., description="Azure AD Tenant ID")
-    client_id: str = Field(..., description="Azure AD Application Client ID")
-    client_secret: str = Field(..., description="Azure AD Application Client Secret")
+    # Microsoft Graph API Configuration (optional - can be configured via GUI)
+    tenant_id: str = Field(
+        default="",
+        description="Azure AD Tenant ID"
+    )
+    client_id: str = Field(
+        default="",
+        description="Azure AD Application Client ID"
+    )
+    client_secret: str = Field(
+        default="",
+        description="Azure AD Application Client Secret"
+    )
     sender_address: str = Field(
-        default="rechnung@ppv-web.de",
+        default="",
         description="Email address to send invoices from"
     )
     

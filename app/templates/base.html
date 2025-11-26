@@ -19,13 +19,13 @@
     </nav>
 
     <main class="container">
-        {% block content %}{% endblock %}
-    </main>
+    {% block content %}{% endblock %}
+</main>
 
-    <footer class="footer">
-        <p>PPV Rechnung Versenden v1.0.0 | &copy; {{ now().year if now is defined else 2024 }} PPV Medien GmbH</p>
+{% block scripts %}{% endblock %}
+
+<footer class="footer">
+        <p>PPV Rechnung Versenden v1.0.0 | &copy; 2024 PPV Medien GmbH</p>
     </footer>
-
-    {% block scripts %}{% endblock %}
 </body>
 </html>

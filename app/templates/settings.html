@@ -28,11 +28,17 @@
             <p><strong>✅ Microsoft Graph API verbunden</strong></p>
             <p>Absender: {{ connection_status.sender }}</p>
         </div>
+        {% elif connection_status.status == 'not_configured' %}
+        <div class="status-box status-warning">
+            <p><strong>⚠️ Nicht konfiguriert</strong></p>
+            <p>{{ connection_status.message }}</p>
+            <p class="hint">Bitte konfigurieren Sie die Microsoft Graph API Zugangsdaten unten.</p>
+        </div>
         {% else %}
         <div class="status-box status-error">
             <p><strong>❌ Verbindungsfehler</strong></p>
             <p>{{ connection_status.message }}</p>
-            <p class="hint">Bitte prüfen Sie die Umgebungsvariablen in der .env Datei.</p>
+            <p class="hint">Bitte prüfen Sie die Microsoft Graph API Zugangsdaten.</p>
         </div>
         {% endif %}
     {% else %}
@@ -62,35 +68,117 @@
 </div>
 
 <!-- Settings Form -->
-<div class="card">
-    <h3>📁 Ordner & Zeitplan</h3>
+<form action="/settings" method="post" id="settingsForm">
     
-    <form action="/settings" method="post">
+    <!-- Microsoft Graph API Settings -->
+    <div class="card">
+        <h3>🔐 Microsoft Graph API</h3>
+        <p class="hint" style="margin-bottom: 1rem;">
+            Zugangsdaten für den E-Mail-Versand über Microsoft 365. 
+            <a href="https://portal.azure.com" target="_blank">Azure Portal öffnen</a>
+        </p>
+        
+        <div class="form-row">
+            <div class="form-group">
+                <label for="tenant_id">Tenant ID</label>
+                <input 
+                    type="text" 
+                    id="tenant_id" 
+                    name="tenant_id" 
+                    value="{{ settings.tenant_id or '' }}"
+                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                >
+                <span class="hint">Azure AD Directory (tenant) ID</span>
+            </div>
+            
+            <div class="form-group">
+                <label for="client_id">Client ID</label>
+                <input 
+                    type="text" 
+                    id="client_id" 
+                    name="client_id" 
+                    value="{{ settings.client_id or '' }}"
+                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                >
+                <span class="hint">Azure AD Application (client) ID</span>
+            </div>
+        </div>
+        
+        <div class="form-row">
+            <div class="form-group">
+                <label for="client_secret">Client Secret</label>
+                <input 
+                    type="password" 
+                    id="client_secret" 
+                    name="client_secret" 
+                    value="{{ settings.client_secret or '' }}"
+                    placeholder="••••••••••••••••"
+                >
+                <span class="hint">Azure AD Client Secret (wird verschlüsselt gespeichert)</span>
+            </div>
+            
+            <div class="form-group">
+                <label for="sender_address">Absender E-Mail</label>
+                <input 
+                    type="email" 
+                    id="sender_address" 
+                    name="sender_address" 
+                    value="{{ settings.sender_address or '' }}"
+                    placeholder="rechnung@example.com"
+                >
+                <span class="hint">E-Mail-Adresse für den Versand (muss Mail.Send Berechtigung haben)</span>
+            </div>
+        </div>
+        
+        <button type="button" class="btn btn-secondary" onclick="testConnection()">
+            🔍 Verbindung testen
+        </button>
+    </div>
+    
+    <!-- Folder Settings -->
+    <div class="card">
+        <h3>📁 Ordner</h3>
+        
         <div class="form-group">
             <label for="source_folder">Quellordner (Rechnungen)</label>
-            <input 
-                type="text" 
-                id="source_folder" 
-                name="source_folder" 
-                value="{{ settings.source_folder }}"
-                placeholder="/Dokumente"
-                required
-            >
+            <div class="input-with-button">
+                <input 
+                    type="text" 
+                    id="source_folder" 
+                    name="source_folder" 
+                    value="{{ settings.source_folder }}"
+                    placeholder="/Dokumente"
+                    required
+                >
+                <button type="button" class="btn btn-secondary" onclick="openFolderBrowser('source_folder')">
+                    📂 Durchsuchen
+                </button>
+            </div>
             <span class="hint">Absoluter Pfad zum Ordner mit RE-*.pdf Dateien</span>
         </div>
         
         <div class="form-group">
             <label for="target_folder">Zielordner (Versendet)</label>
-            <input 
-                type="text" 
-                id="target_folder" 
-                name="target_folder" 
-                value="{{ settings.target_folder }}"
-                placeholder="/Dokumente/RE - Rechnung"
-                required
-            >
+            <div class="input-with-button">
+                <input 
+                    type="text" 
+                    id="target_folder" 
+                    name="target_folder" 
+                    value="{{ settings.target_folder }}"
+                    placeholder="/Dokumente/RE - Rechnung"
+                    required
+                >
+                <button type="button" class="btn btn-secondary" onclick="openFolderBrowser('target_folder')">
+                    📂 Durchsuchen
+                </button>
+            </div>
             <span class="hint">Absoluter Pfad zum Ordner für versendete Rechnungen</span>
         </div>
+    </div>
+    
+    <!-- Schedule & Email Settings -->
+    <div class="card">
+        <h3>📧 Zeitplan & E-Mail</h3>
         
         <div class="form-group">
             <label for="send_time">Tägliche Sendezeit</label>
@@ -100,6 +188,7 @@
                 name="send_time" 
                 value="{{ settings.send_time }}"
                 required
+                style="max-width: 200px;"
             >
             <span class="hint">Uhrzeit für die tägliche automatische Verarbeitung (Europe/Berlin)</span>
         </div>
@@ -114,14 +203,14 @@
             >{{ settings.email_template }}</textarea>
             <span class="hint">Text der E-Mail (Betreff = Dateiname ohne .pdf)</span>
         </div>
-        
-        <div class="form-actions">
-            <button type="submit" class="btn btn-success">
-                💾 Einstellungen speichern
-            </button>
-        </div>
-    </form>
-</div>
+    </div>
+    
+    <div class="form-actions-sticky">
+        <button type="submit" class="btn btn-success btn-large">
+            💾 Alle Einstellungen speichern
+        </button>
+    </div>
+</form>
 
 <!-- Info Box -->
 <div class="card card-info">
@@ -134,4 +223,208 @@
         <li>Mit "Jetzt ausführen" werden alle Rechnungen versendet (unabhängig vom Datum).</li>
     </ul>
 </div>
+
+<!-- Folder Browser Modal -->
+<div id="folderBrowserModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>📂 Ordner auswählen</h3>
+            <button type="button" class="modal-close" onclick="closeFolderBrowser()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="folder-browser-path">
+                <span id="currentPath">/</span>
+            </div>
+            <div class="folder-browser-actions">
+                <button type="button" class="btn btn-small" onclick="navigateUp()" id="btnUp">
+                    ⬆️ Übergeordneter Ordner
+                </button>
+                <button type="button" class="btn btn-small btn-secondary" onclick="showCreateFolder()">
+                    ➕ Neuer Ordner
+                </button>
+            </div>
+            <div id="createFolderForm" style="display: none; margin: 1rem 0;">
+                <div class="input-with-button">
+                    <input type="text" id="newFolderName" placeholder="Neuer Ordnername">
+                    <button type="button" class="btn btn-small btn-success" onclick="createFolder()">Erstellen</button>
+                    <button type="button" class="btn btn-small" onclick="hideCreateFolder()">Abbrechen</button>
+                </div>
+            </div>
+            <div id="folderList" class="folder-list">
+                <div class="loading">Lade Ordner...</div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="closeFolderBrowser()">Abbrechen</button>
+            <button type="button" class="btn btn-success" onclick="selectFolder()">Ordner auswählen</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentBrowserPath = '/';
+let targetInputId = null;
+let parentPath = null;
+
+function openFolderBrowser(inputId) {
+    targetInputId = inputId;
+    const currentValue = document.getElementById(inputId).value || '/';
+    currentBrowserPath = currentValue;
+    document.getElementById('folderBrowserModal').style.display = 'flex';
+    loadFolderContents(currentBrowserPath);
+}
+
+function closeFolderBrowser() {
+    document.getElementById('folderBrowserModal').style.display = 'none';
+    targetInputId = null;
+}
+
+function loadFolderContents(path) {
+    const folderList = document.getElementById('folderList');
+    folderList.innerHTML = '<div class="loading">Lade Ordner...</div>';
+    
+    fetch(`/api/browse?path=${encodeURIComponent(path)}`)
+        .then(response => {
+            if (!response.ok) {
+                return response.json().then(data => {
+                    throw new Error(data.detail || 'Fehler beim Laden');
+                });
+            }
+            return response.json();
+        })
+        .then(data => {
+            currentBrowserPath = data.current_path;
+            parentPath = data.parent_path;
+            document.getElementById('currentPath').textContent = data.current_path;
+            document.getElementById('btnUp').disabled = !data.parent_path;
+            
+            if (data.directories.length === 0) {
+                folderList.innerHTML = '<div class="empty-folder">Keine Unterordner vorhanden</div>';
+                return;
+            }
+            
+            folderList.innerHTML = data.directories.map(dir => `
+                <div class="folder-item ${dir.access_denied ? 'disabled' : ''}" 
+                     onclick="${dir.access_denied ? '' : `navigateTo('${dir.path.replace(/'/g, "\\'")}')`}">
+                    <span class="folder-icon">${dir.access_denied ? '🔒' : '📁'}</span>
+                    <span class="folder-name">${dir.name}</span>
+                    ${dir.has_children ? '<span class="folder-arrow">›</span>' : ''}
+                </div>
+            `).join('');
+        })
+        .catch(error => {
+            folderList.innerHTML = `<div class="error-message">❌ ${error.message}</div>`;
+        });
+}
+
+function navigateTo(path) {
+    loadFolderContents(path);
+}
+
+function navigateUp() {
+    if (parentPath) {
+        loadFolderContents(parentPath);
+    }
+}
+
+function selectFolder() {
+    if (targetInputId) {
+        document.getElementById(targetInputId).value = currentBrowserPath;
+    }
+    closeFolderBrowser();
+}
+
+function showCreateFolder() {
+    document.getElementById('createFolderForm').style.display = 'block';
+    document.getElementById('newFolderName').focus();
+}
+
+function hideCreateFolder() {
+    document.getElementById('createFolderForm').style.display = 'none';
+    document.getElementById('newFolderName').value = '';
+}
+
+function createFolder() {
+    const folderName = document.getElementById('newFolderName').value.trim();
+    if (!folderName) {
+        alert('Bitte geben Sie einen Ordnernamen ein');
+        return;
+    }
+    
+    const newPath = currentBrowserPath + (currentBrowserPath.endsWith('/') ? '' : '/') + folderName;
+    
+    const formData = new FormData();
+    formData.append('path', newPath);
+    
+    fetch('/api/create-folder', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => {
+        if (!response.ok) {
+            return response.json().then(data => {
+                throw new Error(data.detail || 'Fehler beim Erstellen');
+            });
+        }
+        return response.json();
+    })
+    .then(data => {
+        hideCreateFolder();
+        loadFolderContents(currentBrowserPath);
+    })
+    .catch(error => {
+        alert('Fehler: ' + error.message);
+    });
+}
+
+function testConnection() {
+    const btn = event.target;
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '⏳ Teste...';
+    btn.disabled = true;
+    
+    // First save the form, then test
+    const form = document.getElementById('settingsForm');
+    const formData = new FormData(form);
+    
+    fetch('/settings', {
+        method: 'POST',
+        body: formData
+    })
+    .then(() => {
+        return fetch('/api/connection-test');
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            alert('✅ Verbindung erfolgreich!\n\nAbsender: ' + data.details.sender);
+        } else {
+            alert('❌ Verbindungsfehler:\n\n' + (data.detail || 'Unbekannter Fehler'));
+        }
+    })
+    .catch(error => {
+        alert('❌ Fehler:\n\n' + error.message);
+    })
+    .finally(() => {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    });
+}
+
+// Close modal on escape key
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        closeFolderBrowser();
+    }
+});
+
+// Close modal on backdrop click
+document.getElementById('folderBrowserModal').addEventListener('click', function(e) {
+    if (e.target === this) {
+        closeFolderBrowser();
+    }
+});
+</script>
 {% endblock %}

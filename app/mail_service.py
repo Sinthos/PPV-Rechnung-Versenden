@@ -35,22 +35,51 @@ class GraphMailService:
     GRAPH_API_ENDPOINT = "https://graph.microsoft.com/v1.0"
     SCOPE = ["https://graph.microsoft.com/.default"]
     
-    def __init__(self):
-        """Initialize the Graph Mail Service with settings from environment."""
-        self.settings = get_settings()
+    def __init__(self, tenant_id: str = None, client_id: str = None, 
+                 client_secret: str = None, sender_address: str = None):
+        """
+        Initialize the Graph Mail Service.
+        
+        Args:
+            tenant_id: Azure AD Tenant ID (optional, falls back to env)
+            client_id: Azure AD Client ID (optional, falls back to env)
+            client_secret: Azure AD Client Secret (optional, falls back to env)
+            sender_address: Email address to send from (optional, falls back to env)
+        """
+        self.env_settings = get_settings()
+        
+        # Use provided values or fall back to environment
+        self.tenant_id = tenant_id or self.env_settings.tenant_id
+        self.client_id = client_id or self.env_settings.client_id
+        self.client_secret = client_secret or self.env_settings.client_secret
+        self.sender_address = sender_address or self.env_settings.sender_address
+        
         self._app: Optional[msal.ConfidentialClientApplication] = None
         self._token_cache: Optional[dict] = None
+    
+    def _create_app(self) -> msal.ConfidentialClientApplication:
+        """Create a new MSAL application instance."""
+        return msal.ConfidentialClientApplication(
+            client_id=self.client_id,
+            client_credential=self.client_secret,
+            authority=f"https://login.microsoftonline.com/{self.tenant_id}",
+        )
     
     @property
     def app(self) -> msal.ConfidentialClientApplication:
         """Get or create the MSAL application instance."""
         if self._app is None:
-            self._app = msal.ConfidentialClientApplication(
-                client_id=self.settings.client_id,
-                client_credential=self.settings.client_secret,
-                authority=f"https://login.microsoftonline.com/{self.settings.tenant_id}",
-            )
+            self._app = self._create_app()
         return self._app
+    
+    def reconfigure(self, tenant_id: str, client_id: str, 
+                    client_secret: str, sender_address: str):
+        """Reconfigure the service with new credentials."""
+        self.tenant_id = tenant_id
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.sender_address = sender_address
+        self._app = None  # Force recreation on next use
     
     def get_access_token(self) -> str:
         """
@@ -144,7 +173,7 @@ class GraphMailService:
             logger.debug(f"Added attachment: {attachment_name} ({len(attachment_content)} bytes)")
         
         # Send the email
-        endpoint = f"{self.GRAPH_API_ENDPOINT}/users/{self.settings.sender_address}/sendMail"
+        endpoint = f"{self.GRAPH_API_ENDPOINT}/users/{self.sender_address}/sendMail"
         
         headers = {
             "Authorization": f"Bearer {access_token}",
@@ -191,9 +220,9 @@ class GraphMailService:
             token = self.get_access_token()
             return {
                 "status": "connected",
-                "tenant_id": self.settings.tenant_id,
-                "client_id": self.settings.client_id,
-                "sender": self.settings.sender_address,
+                "tenant_id": self.tenant_id,
+                "client_id": self.client_id,
+                "sender": self.sender_address,
                 "token_acquired": True
             }
         except GraphMailError:
@@ -206,12 +235,44 @@ class GraphMailService:
 _mail_service: Optional[GraphMailService] = None
 
 
-def get_mail_service() -> GraphMailService:
-    """Get or create the global mail service instance."""
+def get_mail_service(tenant_id: str = None, client_id: str = None,
+                     client_secret: str = None, sender_address: str = None) -> GraphMailService:
+    """
+    Get or create the mail service instance.
+    
+    If credentials are provided, creates a new instance with those credentials.
+    Otherwise returns the cached instance or creates one with env settings.
+    """
     global _mail_service
+    
+    if tenant_id and client_id and client_secret and sender_address:
+        # Create new instance with provided credentials
+        return GraphMailService(
+            tenant_id=tenant_id,
+            client_id=client_id,
+            client_secret=client_secret,
+            sender_address=sender_address
+        )
+    
     if _mail_service is None:
         _mail_service = GraphMailService()
     return _mail_service
+
+
+def get_mail_service_from_db() -> GraphMailService:
+    """Get mail service configured from database settings."""
+    from app.database import get_db_session
+    from app.models import AppSettings
+    
+    with get_db_session() as db:
+        ms_settings = AppSettings.get_microsoft_settings(db)
+    
+    return get_mail_service(
+        tenant_id=ms_settings['tenant_id'],
+        client_id=ms_settings['client_id'],
+        client_secret=ms_settings['client_secret'],
+        sender_address=ms_settings['sender_address']
+    )
 
 
 def send_invoice_email(

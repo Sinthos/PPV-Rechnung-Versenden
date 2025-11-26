@@ -115,6 +115,12 @@ class AppSettings(Base):
     KEY_SEND_TIME = "send_time"
     KEY_EMAIL_TEMPLATE = "email_template"
     
+    # Microsoft Graph API settings (stored in DB, override .env)
+    KEY_TENANT_ID = "tenant_id"
+    KEY_CLIENT_ID = "client_id"
+    KEY_CLIENT_SECRET = "client_secret"
+    KEY_SENDER_ADDRESS = "sender_address"
+    
     # Default email template
     DEFAULT_EMAIL_TEMPLATE = """Sehr geehrte Damen und Herren,
 
@@ -159,6 +165,11 @@ PPV Medien GmbH"""
             cls.KEY_TARGET_FOLDER: cls.get(db, cls.KEY_TARGET_FOLDER, settings.default_target_folder),
             cls.KEY_SEND_TIME: cls.get(db, cls.KEY_SEND_TIME, settings.default_send_time),
             cls.KEY_EMAIL_TEMPLATE: cls.get(db, cls.KEY_EMAIL_TEMPLATE, cls.DEFAULT_EMAIL_TEMPLATE),
+            # Microsoft Graph settings - use DB value if set, otherwise fall back to env
+            cls.KEY_TENANT_ID: cls.get(db, cls.KEY_TENANT_ID, settings.tenant_id),
+            cls.KEY_CLIENT_ID: cls.get(db, cls.KEY_CLIENT_ID, settings.client_id),
+            cls.KEY_CLIENT_SECRET: cls.get(db, cls.KEY_CLIENT_SECRET, settings.client_secret),
+            cls.KEY_SENDER_ADDRESS: cls.get(db, cls.KEY_SENDER_ADDRESS, settings.sender_address),
         }
     
     @classmethod
@@ -170,6 +181,7 @@ PPV Medien GmbH"""
             cls.KEY_TARGET_FOLDER: settings.default_target_folder,
             cls.KEY_SEND_TIME: settings.default_send_time,
             cls.KEY_EMAIL_TEMPLATE: cls.DEFAULT_EMAIL_TEMPLATE,
+            # Don't initialize Microsoft settings from env - let user configure via GUI
         }
         
         for key, value in defaults.items():
@@ -179,3 +191,14 @@ PPV Medien GmbH"""
                 logger.info(f"Initialized default setting: {key}")
         
         db.commit()
+    
+    @classmethod
+    def get_microsoft_settings(cls, db: Session) -> dict:
+        """Get Microsoft Graph API settings from database."""
+        settings = get_settings()
+        return {
+            'tenant_id': cls.get(db, cls.KEY_TENANT_ID) or settings.tenant_id,
+            'client_id': cls.get(db, cls.KEY_CLIENT_ID) or settings.client_id,
+            'client_secret': cls.get(db, cls.KEY_CLIENT_SECRET) or settings.client_secret,
+            'sender_address': cls.get(db, cls.KEY_SENDER_ADDRESS) or settings.sender_address,
+        }

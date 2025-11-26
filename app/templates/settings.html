@@ -72,7 +72,7 @@
     
     <!-- Microsoft Graph API Settings -->
     <div class="card">
-        <h3>🔐 Microsoft Graph API</h3>
+        <h3>🔐 E-Mail Versand (Microsoft Graph)</h3>
         <p class="hint" style="margin-bottom: 1rem;">
             Zugangsdaten für den E-Mail-Versand über Microsoft 365. 
             <a href="https://portal.azure.com" target="_blank">Azure Portal öffnen</a>
@@ -137,7 +137,58 @@
     
     <!-- Folder Settings -->
     <div class="card">
-        <h3>📁 Ordner</h3>
+        <h3>📁 Speicher & Ordner</h3>
+
+        <!-- Storage Type Selection -->
+        <div class="form-group">
+            <label>Speichertyp</label>
+            <div class="radio-group">
+                <label class="radio-label">
+                    <input type="radio" name="storage_type" value="local" 
+                           {% if settings.storage_type == 'local' %}checked{% endif %}
+                           onchange="toggleStorageSettings()"> 
+                    Lokal (Server-Dateisystem)
+                </label>
+                <label class="radio-label">
+                    <input type="radio" name="storage_type" value="smb" 
+                           {% if settings.storage_type == 'smb' %}checked{% endif %}
+                           onchange="toggleStorageSettings()"> 
+                    Netzwerk (SMB/CIFS)
+                </label>
+            </div>
+        </div>
+
+        <!-- SMB Settings -->
+        <div id="smbSettings" style="display: none; border-left: 3px solid #007bff; padding-left: 1rem; margin-bottom: 1.5rem;">
+            <h4>Netzwerk-Konfiguration</h4>
+            <p class="hint">Hinweis: Bitte speichern Sie die Einstellungen, bevor Sie die Ordner durchsuchen.</p>
+            
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="smb_host">Server / Host</label>
+                    <input type="text" id="smb_host" name="smb_host" value="{{ settings.smb_host }}" placeholder="192.168.1.100">
+                </div>
+                <div class="form-group">
+                    <label for="smb_share">Freigabe (Share)</label>
+                    <input type="text" id="smb_share" name="smb_share" value="{{ settings.smb_share }}" placeholder="Data">
+                </div>
+            </div>
+            
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="smb_username">Benutzername</label>
+                    <input type="text" id="smb_username" name="smb_username" value="{{ settings.smb_username }}">
+                </div>
+                <div class="form-group">
+                    <label for="smb_password">Passwort</label>
+                    <input type="password" id="smb_password" name="smb_password" value="{{ settings.smb_password }}" placeholder="••••••••">
+                </div>
+            </div>
+             <div class="form-group">
+                <label for="smb_domain">Domain (Optional)</label>
+                <input type="text" id="smb_domain" name="smb_domain" value="{{ settings.smb_domain }}" placeholder="WORKGROUP">
+            </div>
+        </div>
         
         <div class="form-group">
             <label for="source_folder">Quellordner (Rechnungen)</label>
@@ -426,5 +477,18 @@ document.getElementById('folderBrowserModal').addEventListener('click', function
         closeFolderBrowser();
     }
 });
+
+function toggleStorageSettings() {
+    const type = document.querySelector('input[name="storage_type"]:checked').value;
+    const smbSettings = document.getElementById('smbSettings');
+    if (type === 'smb') {
+        smbSettings.style.display = 'block';
+    } else {
+        smbSettings.style.display = 'none';
+    }
+}
+
+// Initial state
+toggleStorageSettings();
 </script>
 {% endblock %}

@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.database import init_db, get_db
 from app.models import AppSettings, EmailLog
+from app.filesystem import get_filesystem
 from app.scheduler import (
     start_scheduler,
     stop_scheduler,
@@ -154,6 +155,14 @@ async def save_settings(
     target_folder: str = Form(...),
     send_time: str = Form(...),
     email_template: str = Form(...),
+    # SMB Settings
+    storage_type: str = Form("local"),
+    smb_host: str = Form(""),
+    smb_share: str = Form(""),
+    smb_username: str = Form(""),
+    smb_password: str = Form(""),
+    smb_domain: str = Form(""),
+    # Graph Settings
     tenant_id: str = Form(""),
     client_id: str = Form(""),
     client_secret: str = Form(""),
@@ -163,15 +172,23 @@ async def save_settings(
     """Save settings from form."""
     errors = []
     
-    # Validate source folder
-    source_path = Path(source_folder)
-    if not source_path.is_absolute():
-        errors.append("Quellordner muss ein absoluter Pfad sein")
-    
-    # Validate target folder
-    target_path = Path(target_folder)
-    if not target_path.is_absolute():
-        errors.append("Zielordner muss ein absoluter Pfad sein")
+    # Validate folders (depends on storage type)
+    if storage_type == "local":
+        source_path = Path(source_folder)
+        if not source_path.is_absolute():
+            errors.append("Quellordner muss ein absoluter Pfad sein (bei lokaler Speicherung)")
+        
+        target_path = Path(target_folder)
+        if not target_path.is_absolute():
+            errors.append("Zielordner muss ein absoluter Pfad sein (bei lokaler Speicherung)")
+    elif storage_type == "smb":
+        if not smb_host or not smb_share:
+            errors.append("Für SMB müssen Host und Freigabe (Share) angegeben werden")
+        # For SMB, folders are relative to share, so we just check they are not empty
+        if not source_folder.strip():
+            errors.append("Quellordner darf nicht leer sein")
+        if not target_folder.strip():
+            errors.append("Zielordner darf nicht leer sein")
     
     # Validate send time format (HH:MM)
     if not re.match(r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$', send_time):
@@ -196,6 +213,15 @@ async def save_settings(
     AppSettings.set(db, AppSettings.KEY_TARGET_FOLDER, target_folder.strip())
     AppSettings.set(db, AppSettings.KEY_SEND_TIME, send_time.strip())
     AppSettings.set(db, AppSettings.KEY_EMAIL_TEMPLATE, email_template)
+    
+    # Save Storage settings
+    AppSettings.set(db, AppSettings.KEY_STORAGE_TYPE, storage_type)
+    AppSettings.set(db, AppSettings.KEY_SMB_HOST, smb_host.strip())
+    AppSettings.set(db, AppSettings.KEY_SMB_SHARE, smb_share.strip())
+    AppSettings.set(db, AppSettings.KEY_SMB_USERNAME, smb_username.strip())
+    if smb_password.strip(): # Only update password if provided
+        AppSettings.set(db, AppSettings.KEY_SMB_PASSWORD, smb_password.strip())
+    AppSettings.set(db, AppSettings.KEY_SMB_DOMAIN, smb_domain.strip())
     
     # Save Microsoft Graph settings (only if provided)
     if tenant_id.strip():
@@ -380,55 +406,37 @@ async def api_connection_test(db: Session = Depends(get_db)):
 # ============================================================================
 
 @app.get("/api/browse")
-async def browse_folders(path: str = "/"):
+async def browse_folders(path: str = "/", db: Session = Depends(get_db)):
     """
-    Browse folders on the server filesystem.
+    Browse folders using the configured filesystem (Local or SMB).
     Returns list of directories at the given path.
     """
     try:
-        # Normalize and validate path
-        browse_path = Path(path).resolve()
+        settings = AppSettings.get_all_settings(db)
+        fs = get_filesystem(settings)
         
-        # Security: Don't allow browsing certain system directories
-        forbidden_paths = ['/proc', '/sys', '/dev', '/run']
-        if any(str(browse_path).startswith(fp) for fp in forbidden_paths):
-            raise HTTPException(status_code=403, detail="Zugriff auf diesen Pfad nicht erlaubt")
-        
-        if not browse_path.exists():
-            raise HTTPException(status_code=404, detail="Pfad existiert nicht")
-        
-        if not browse_path.is_dir():
-            raise HTTPException(status_code=400, detail="Pfad ist kein Verzeichnis")
-        
-        # Get parent path
-        parent_path = str(browse_path.parent) if browse_path != browse_path.parent else None
+        # Security checks for local filesystem
+        if settings.get("storage_type") == "local":
+            if any(path.startswith(fp) for fp in ['/proc', '/sys', '/dev', '/run']):
+                raise HTTPException(status_code=403, detail="Zugriff auf diesen Pfad nicht erlaubt")
         
         # List directories
-        directories = []
         try:
-            for item in sorted(browse_path.iterdir()):
-                if item.is_dir() and not item.name.startswith('.'):
-                    try:
-                        # Check if we can access the directory
-                        list(item.iterdir())
-                        directories.append({
-                            "name": item.name,
-                            "path": str(item),
-                            "has_children": any(p.is_dir() for p in item.iterdir() if not p.name.startswith('.'))
-                        })
-                    except PermissionError:
-                        # Include but mark as inaccessible
-                        directories.append({
-                            "name": item.name,
-                            "path": str(item),
-                            "has_children": False,
-                            "access_denied": True
-                        })
-        except PermissionError:
-            raise HTTPException(status_code=403, detail="Keine Berechtigung für diesen Ordner")
+            directories = fs.list_directories(path)
+        except Exception as e:
+            logger.error(f"FS List Error: {e}")
+            raise HTTPException(status_code=500, detail=f"Fehler beim Auflisten: {str(e)}")
+            
+        # Determine parent path
+        parent_path = None
+        if path != "/" and path != "" and path != ".":
+            # Simple string manipulation for parent
+            parent_path = str(Path(path).parent)
+            if parent_path == ".":
+                parent_path = "/"
         
         return {
-            "current_path": str(browse_path),
+            "current_path": path,
             "parent_path": parent_path,
             "directories": directories
         }
@@ -441,19 +449,21 @@ async def browse_folders(path: str = "/"):
 
 
 @app.post("/api/create-folder")
-async def create_folder(path: str = Form(...)):
-    """Create a new folder at the specified path."""
+async def create_folder(path: str = Form(...), db: Session = Depends(get_db)):
+    """Create a new folder at the specified path using configured FS."""
     try:
-        folder_path = Path(path).resolve()
+        settings = AppSettings.get_all_settings(db)
+        fs = get_filesystem(settings)
         
-        # Security check
-        forbidden_paths = ['/proc', '/sys', '/dev', '/run', '/etc', '/bin', '/sbin', '/usr']
-        if any(str(folder_path).startswith(fp) for fp in forbidden_paths):
-            raise HTTPException(status_code=403, detail="Ordner kann hier nicht erstellt werden")
+        # Security check for local
+        if settings.get("storage_type") == "local":
+            forbidden_paths = ['/proc', '/sys', '/dev', '/run', '/etc', '/bin', '/sbin', '/usr']
+            if any(path.startswith(fp) for fp in forbidden_paths):
+                raise HTTPException(status_code=403, detail="Ordner kann hier nicht erstellt werden")
         
-        folder_path.mkdir(parents=True, exist_ok=True)
+        fs.create_directory(path)
         
-        return {"status": "success", "path": str(folder_path)}
+        return {"status": "success", "path": path}
         
     except PermissionError:
         raise HTTPException(status_code=403, detail="Keine Berechtigung zum Erstellen des Ordners")

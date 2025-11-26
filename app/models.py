@@ -115,6 +115,14 @@ class AppSettings(Base):
     KEY_SEND_TIME = "send_time"
     KEY_EMAIL_TEMPLATE = "email_template"
     
+    # Network Storage Settings (SMB)
+    KEY_STORAGE_TYPE = "storage_type"  # 'local' or 'smb'
+    KEY_SMB_HOST = "smb_host"
+    KEY_SMB_SHARE = "smb_share"
+    KEY_SMB_USERNAME = "smb_username"
+    KEY_SMB_PASSWORD = "smb_password"
+    KEY_SMB_DOMAIN = "smb_domain"
+    
     # Microsoft Graph API settings (stored in DB, override .env)
     KEY_TENANT_ID = "tenant_id"
     KEY_CLIENT_ID = "client_id"
@@ -168,6 +176,13 @@ PPV Medien GmbH"""
             cls.KEY_TARGET_FOLDER: cls.get(db, cls.KEY_TARGET_FOLDER, settings.default_target_folder),
             cls.KEY_SEND_TIME: cls.get(db, cls.KEY_SEND_TIME, settings.default_send_time),
             cls.KEY_EMAIL_TEMPLATE: cls.get(db, cls.KEY_EMAIL_TEMPLATE, cls.DEFAULT_EMAIL_TEMPLATE),
+            # Storage settings
+            cls.KEY_STORAGE_TYPE: cls.get(db, cls.KEY_STORAGE_TYPE, "local"),
+            cls.KEY_SMB_HOST: cls.get(db, cls.KEY_SMB_HOST, ""),
+            cls.KEY_SMB_SHARE: cls.get(db, cls.KEY_SMB_SHARE, ""),
+            cls.KEY_SMB_USERNAME: cls.get(db, cls.KEY_SMB_USERNAME, ""),
+            cls.KEY_SMB_PASSWORD: cls.get(db, cls.KEY_SMB_PASSWORD, ""),
+            cls.KEY_SMB_DOMAIN: cls.get(db, cls.KEY_SMB_DOMAIN, ""),
             # Microsoft Graph settings
             cls.KEY_TENANT_ID: ms_settings['tenant_id'],
             cls.KEY_CLIENT_ID: ms_settings['client_id'],
@@ -184,6 +199,7 @@ PPV Medien GmbH"""
             cls.KEY_TARGET_FOLDER: settings.default_target_folder,
             cls.KEY_SEND_TIME: settings.default_send_time,
             cls.KEY_EMAIL_TEMPLATE: cls.DEFAULT_EMAIL_TEMPLATE,
+            cls.KEY_STORAGE_TYPE: "local",
             # Don't initialize Microsoft settings from env - let user configure via GUI
         }
         

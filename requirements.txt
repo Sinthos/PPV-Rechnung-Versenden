@@ -26,3 +26,7 @@ pydantic-settings==2.1.0
 
 # Timezone support
 pytz==2023.3
+
+# Network Storage (SMB)
+smbprotocol==1.11.0
+smbclient==0.1.0

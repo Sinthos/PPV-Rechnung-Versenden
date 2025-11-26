@@ -174,39 +174,57 @@ class SMBFileSystem(FileSystemProvider):
             logger.error(f"Failed to register SMB session: {e}")
             raise
 
+    def _normalize_rel_path(self, path: str) -> str:
+        """Return a clean relative path without leading slashes."""
+        if path is None:
+            return ""
+        rel = path.replace("\\", "/").strip()
+        if rel in ("", "/", "."):
+            return ""
+        return rel.lstrip("/")
+
     def _get_smb_path(self, path: str) -> str:
-        """Convert path to UNC format: \\server\share\path"""
-        # Clean up path
-        path = path.replace("/", "\\")
-        if path.startswith("\\"):
-            path = path.lstrip("\\")
-            
-        # If path already includes server/share, try to respect it
-        # But usually we work relative to the share or the provided host
-        if path.startswith(f"{self.host}"):
-            return f"\\\\{path}"
-            
-        return f"\\\\{self.host}\\{self.share}\\{path}"
+        """Convert relative path to UNC format: \\server\share\path"""
+        rel = self._normalize_rel_path(path)
+        rel_backslash = rel.replace("/", "\\")
+
+        base = f"\\\\{self.host}\\{self.share}"
+
+        # If caller already passed an absolute UNC, keep it
+        if rel_backslash.startswith(f"{self.host}\\"):
+            return f"\\\\{rel_backslash}"
+        if rel_backslash.startswith("\\\\"):
+            return rel_backslash
+
+        return f"{base}\\{rel_backslash}" if rel_backslash else base
 
     def list_directories(self, path: str) -> List[Dict[str, Any]]:
-        full_path = self._get_smb_path(path)
+        rel_path = self._normalize_rel_path(path)
+        full_path = self._get_smb_path(rel_path)
         result = []
         try:
             for filename in smbclient.listdir(full_path):
                 file_path = smbclient.path.join(full_path, filename)
                 if smbclient.path.isdir(file_path):
+                    # Keep relative path so browser can drill down
+                    next_rel = f"{rel_path}/{filename}" if rel_path else filename
                     result.append({
                         "name": filename,
-                        "path": filename, # Keep relative to current browse path if possible? 
-                                        # Or just use the name for navigation in frontend
+                        "path": next_rel,
                         "has_children": True,
                         "access_denied": False
                     })
             result.sort(key=lambda x: x["name"].lower())
+        except SMBResponseException as e:
+            logger.error(f"SMB list error at {full_path}: {e}")
+            # Surface access issues to the caller instead of silently hiding them
+            if "STATUS_ACCESS_DENIED" in str(e):
+                raise PermissionError(f"SMB Zugriff verweigert auf {rel_path or '/'}: {e}")
+            raise
         except Exception as e:
             logger.error(f"SMB list error: {e}")
-            # raise e # Or handle gracefully
-            
+            raise
+
         return result
 
     def create_directory(self, path: str) -> None:
@@ -232,7 +250,7 @@ class SMBFileSystem(FileSystemProvider):
             import fnmatch
             for filename in smbclient.listdir(full_path):
                 if fnmatch.fnmatch(filename, pattern):
-                    files.append(os.path.join(path, filename)) # Return 'relative' path for internal use
+                    files.append(os.path.join(self._normalize_rel_path(path), filename)) # Return 'relative' path for internal use
         except Exception as e:
             logger.error(f"SMB list files error: {e}")
             

@@ -538,6 +538,9 @@ async def browse_folders(path: str = "/", db: Session = Depends(get_db)):
         # List directories
         try:
             directories = fs.list_directories(path)
+        except PermissionError as e:
+            logger.error(f"FS List Permission Error: {e}")
+            raise HTTPException(status_code=403, detail=str(e))
         except Exception as e:
             logger.error(f"FS List Error: {e}")
             raise HTTPException(status_code=500, detail=f"Fehler beim Auflisten: {str(e)}")

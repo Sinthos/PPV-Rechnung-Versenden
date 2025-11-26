@@ -15,8 +15,8 @@ import secrets
 import os
 
 import bcrypt
-from fastapi import FastAPI, Request, Depends, Form, HTTPException, status
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi import FastAPI, Request, Depends, Form, HTTPException, status, Body, UploadFile, File, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -32,7 +32,8 @@ from app.scheduler import (
     reschedule_daily_job,
     run_now,
     get_next_run_time,
-    TIMEZONE
+    TIMEZONE,
+    render_email_template
 )
 from app.invoice_parser import parse_invoice, ZUGFeRDParseError
 from app.mail_service import get_mail_service, GraphMailService, GraphMailError
@@ -420,8 +421,105 @@ async def logs_page(request: Request, db: Session = Depends(get_db), user=Depend
         {
             "request": request,
             "logs": logs,
+            "message": request.query_params.get("message"),
+            "error": request.query_params.get("error"),
         }
     )
+
+
+@app.post("/logs/{log_id}/resend")
+async def resend_log(
+    log_id: int,
+    user=Depends(require_basic_auth),
+    db: Session = Depends(get_db)
+):
+    """Resend a logged invoice email using the stored filename and current settings."""
+    log_entry = db.query(EmailLog).filter(EmailLog.id == log_id).first()
+    if not log_entry:
+        return RedirectResponse(url="/logs?error=Eintrag nicht gefunden", status_code=302)
+
+    settings = AppSettings.get_all_settings(db)
+    fs = get_filesystem(settings)
+
+    candidate_paths = []
+    source_folder = settings.get(AppSettings.KEY_SOURCE_FOLDER, "")
+    target_folder = settings.get(AppSettings.KEY_TARGET_FOLDER, "")
+    if target_folder:
+        candidate_paths.append(fs.join_path(target_folder, log_entry.filename))
+    if source_folder:
+        candidate_paths.append(fs.join_path(source_folder, log_entry.filename))
+
+    found_path = None
+    for path in candidate_paths:
+        try:
+            if fs.exists(path):
+                found_path = path
+                break
+        except Exception as e:
+            logger.warning(f"Resend: path check failed for {path}: {e}")
+
+    if not found_path:
+        return RedirectResponse(url="/logs?error=PDF nicht gefunden (Quelle/Ziel)", status_code=302)
+
+    try:
+        pdf_bytes = fs.read_file(found_path)
+    except Exception as e:
+        return RedirectResponse(url=f"/logs?error=Lesefehler: {e}", status_code=302)
+
+    try:
+        invoice_data = parse_invoice(BytesIO(pdf_bytes), filename=log_entry.filename)
+    except Exception as e:
+        return RedirectResponse(url=f"/logs?error=Parsing fehlgeschlagen: {e}", status_code=302)
+
+    today = datetime.now(TIMEZONE).date()
+    email_template = settings.get(AppSettings.KEY_EMAIL_TEMPLATE, "")
+    subject_template = log_entry.subject or log_entry.filename.replace(".pdf", "")
+
+    email_body = render_email_template(email_template, invoice_data, log_entry.filename, today)
+    subject_text = render_email_template(subject_template, invoice_data, log_entry.filename, today)
+
+    ms_settings = AppSettings.get_microsoft_settings(db)
+    mail_service = GraphMailService(
+        tenant_id=ms_settings['tenant_id'],
+        client_id=ms_settings['client_id'],
+        client_secret=ms_settings['client_secret'],
+        sender_address=ms_settings['sender_address']
+    )
+
+    try:
+        mail_service.send_email(
+            to_email=invoice_data.recipient_email,
+            subject=subject_text,
+            body=email_body,
+            attachment_content=pdf_bytes,
+            attachment_name=log_entry.filename
+        )
+        EmailLog.create(
+            db=db,
+            filename=log_entry.filename,
+            invoice_date=invoice_data.invoice_date_str,
+            recipient_email=invoice_data.recipient_email or "",
+            subject=subject_text,
+            status="sent",
+            error_message=None
+        )
+        db.commit()
+        return RedirectResponse(url="/logs?message=E-Mail erneut versendet", status_code=302)
+    except GraphMailError as e:
+        EmailLog.create(
+            db=db,
+            filename=log_entry.filename,
+            invoice_date=invoice_data.invoice_date_str,
+            recipient_email=invoice_data.recipient_email or "",
+            subject=subject_text,
+            status="failed",
+            error_message=f"Resend error: {e}"
+        )
+        db.commit()
+        return RedirectResponse(url=f"/logs?error=Versandfehler: {e}", status_code=302)
+    except Exception as e:
+        db.rollback()
+        return RedirectResponse(url=f"/logs?error=Unbekannter Fehler: {e}", status_code=302)
 
 
 # ============================================================================
@@ -469,6 +567,37 @@ async def api_run_now(user=Depends(require_basic_auth)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/run-selected")
+async def api_run_selected(
+    payload: dict = Body(...),
+    user=Depends(require_basic_auth)
+):
+    """Trigger invoice processing for a selected list of filenames."""
+    filenames = payload.get("filenames") or []
+    dry_run = bool(payload.get("dry_run", False))
+
+    if not isinstance(filenames, list) or not filenames:
+        raise HTTPException(status_code=400, detail="filenames muss eine Liste sein")
+
+    selected = {os.path.basename(str(name)) for name in filenames}
+
+    try:
+        results = run_now(dry_run=dry_run, selected_files=selected)
+        return {"status": "success", "results": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/run-dry")
+async def api_run_dry(user=Depends(require_basic_auth)):
+    """Dry run invoice processing without sending emails."""
+    try:
+        results = run_now(dry_run=True)
+        return {"status": "success", "results": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/next-run")
 async def api_next_run(user=Depends(require_basic_auth)):
     """Get next scheduled run time via API."""
@@ -477,6 +606,110 @@ async def api_next_run(user=Depends(require_basic_auth)):
         "next_run": next_run.isoformat() if next_run else None,
         "timezone": "Europe/Berlin"
     }
+
+
+@app.get("/api/metrics")
+async def api_metrics(db: Session = Depends(get_db), user=Depends(require_basic_auth)):
+    """
+    Simple metrics endpoint (Prometheus text format).
+    """
+    sent_count = db.query(EmailLog).filter(EmailLog.status == "sent").count()
+    failed_count = db.query(EmailLog).filter(EmailLog.status == "failed").count()
+    total_count = db.query(EmailLog).count()
+
+    last_success = (
+        db.query(EmailLog)
+        .filter(EmailLog.status == "sent")
+        .order_by(EmailLog.timestamp.desc())
+        .first()
+    )
+    last_failure = (
+        db.query(EmailLog)
+        .filter(EmailLog.status == "failed")
+        .order_by(EmailLog.timestamp.desc())
+        .first()
+    )
+    next_run = get_next_run_time()
+
+    lines = [
+        "# HELP ppv_email_sent_total Anzahl erfolgreich versendeter Rechnungen",
+        "# TYPE ppv_email_sent_total counter",
+        f"ppv_email_sent_total {sent_count}",
+        "# HELP ppv_email_failed_total Anzahl fehlgeschlagener Rechnungen",
+        "# TYPE ppv_email_failed_total counter",
+        f"ppv_email_failed_total {failed_count}",
+        "# HELP ppv_email_total Gesamtanzahl verarbeiteter Rechnungen",
+        "# TYPE ppv_email_total counter",
+        f"ppv_email_total {total_count}",
+        "# HELP ppv_email_last_success_timestamp Unix Zeitstempel der letzten erfolgreichen Mail",
+        "# TYPE ppv_email_last_success_timestamp gauge",
+        f"ppv_email_last_success_timestamp {int(last_success.timestamp.timestamp()) if last_success else 0}",
+        "# HELP ppv_email_last_failure_timestamp Unix Zeitstempel der letzten fehlgeschlagenen Mail",
+        "# TYPE ppv_email_last_failure_timestamp gauge",
+        f"ppv_email_last_failure_timestamp {int(last_failure.timestamp.timestamp()) if last_failure else 0}",
+        "# HELP ppv_email_next_run_timestamp Unix Zeitstempel der nächsten geplanten Ausführung",
+        "# TYPE ppv_email_next_run_timestamp gauge",
+        f"ppv_email_next_run_timestamp {int(next_run.timestamp()) if next_run else 0}",
+    ]
+
+    return Response("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
+
+
+@app.get("/api/backup/db")
+async def api_backup_db(user=Depends(require_basic_auth)):
+    """Download a backup of the SQLite database (settings + logs)."""
+    settings = get_settings()
+    db_path = settings.database_path
+
+    if not db_path.exists():
+        raise HTTPException(status_code=404, detail="Datenbank nicht gefunden")
+
+    return FileResponse(
+        path=str(db_path),
+        filename="ppv_rechnung_backup.db",
+        media_type="application/octet-stream"
+    )
+
+
+@app.post("/api/restore/db")
+async def api_restore_db(file: UploadFile = File(...), user=Depends(require_basic_auth)):
+    """Restore the SQLite database from an uploaded file."""
+    settings = get_settings()
+    db_path = settings.database_path
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    tmp_path = db_path.with_suffix(".restore_tmp")
+
+    try:
+        with open(tmp_path, "wb") as tmp_file:
+            for chunk in iter(lambda: file.file.read(1024 * 1024), b""):
+                tmp_file.write(chunk)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Upload fehlgeschlagen: {e}")
+
+    try:
+        # Keep a simple backup of the previous DB
+        if db_path.exists():
+            backup_path = db_path.with_suffix(".bak")
+            try:
+                db_path.replace(backup_path)
+            except Exception:
+                pass
+        tmp_path.replace(db_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Wiederherstellung fehlgeschlagen: {e}")
+    finally:
+        try:
+            file.file.close()
+        except Exception:
+            pass
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
+
+    return {"status": "success", "message": "Datenbank wiederhergestellt. Bitte Anwendung neu laden."}
 
 
 @app.get("/api/invoice-preview")

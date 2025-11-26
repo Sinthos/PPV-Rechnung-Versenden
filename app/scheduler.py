@@ -8,10 +8,11 @@ import shutil
 import os
 from datetime import date, datetime
 from pathlib import Path
-from typing import Optional, Callable
+from typing import Optional, Callable, Set
 from io import BytesIO
 
 import pytz
+from collections import defaultdict
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.jobstores.base import JobLookupError
@@ -36,6 +37,45 @@ TIMEZONE = pytz.timezone('Europe/Berlin')
 DAILY_JOB_ID = "daily_invoice_processing"
 
 
+class _SafeDict(defaultdict):
+    """Default dict that returns empty string for missing keys."""
+    def __missing__(self, key):
+        return ""
+
+
+def render_email_template(template: str, invoice_data: InvoiceData, filename: str, today: date) -> str:
+    """
+    Render the email template with available invoice placeholders.
+    
+    Supported placeholders:
+        {invoice_number}, {buyer_name}, {invoice_date}, {invoice_date_iso},
+        {recipient_email}, {filename}, {today}
+    """
+    if not template:
+        return ""
+
+    values = _SafeDict(
+        {
+            "invoice_number": invoice_data.invoice_number or "",
+            "buyer_name": invoice_data.buyer_name or "",
+            "invoice_date": invoice_data.invoice_date_str or "",
+            "invoice_date_iso": invoice_data.invoice_date.isoformat() if invoice_data.invoice_date else "",
+            "recipient_email": invoice_data.recipient_email or "",
+            "filename": filename,
+            "today": today.isoformat(),
+        }
+    )
+
+    try:
+        return template.format_map(values)
+    except Exception:
+        # If format fails (e.g., stray braces), fall back to simple replace for known keys
+        rendered = template
+        for key, val in values.items():
+            rendered = rendered.replace(f"{{{key}}}", str(val))
+        return rendered
+
+
 class InvoiceProcessor:
     """
     Processes invoice PDFs: parses, sends emails, and moves files.
@@ -44,13 +84,21 @@ class InvoiceProcessor:
     def __init__(self):
         self.settings = get_settings()
     
-    def process_invoices(self, force_send: bool = False) -> dict:
+    def process_invoices(
+        self,
+        force_send: bool = False,
+        dry_run: bool = False,
+        allow_resend: bool = False,
+        selected_files: Optional[Set[str]] = None
+    ) -> dict:
         """
         Process all invoice PDFs in the source folder.
         
         Args:
             force_send: If True, send all invoices regardless of date.
                        If False, only send invoices dated today.
+            dry_run: If True, parse and validate but do not send or move files.
+            allow_resend: If True, skip duplicate checks and resend emails.
         
         Returns:
             Dict with processing results
@@ -62,6 +110,7 @@ class InvoiceProcessor:
             "sent": 0,
             "skipped": 0,
             "failed": 0,
+            "would_send": 0,
             "errors": []
         }
         
@@ -103,8 +152,12 @@ class InvoiceProcessor:
             logger.info(f"Today's date (Europe/Berlin): {today}")
             
             for file_path in invoice_files:
-                results["processed"] += 1
                 filename = os.path.basename(file_path)
+
+                if selected_files is not None and filename not in selected_files:
+                    continue
+
+                results["processed"] += 1
                 
                 try:
                     result = self._process_single_invoice(
@@ -116,11 +169,16 @@ class InvoiceProcessor:
                         email_template=email_template,
                         today=today,
                         force_send=force_send,
-                        send_past_dates=send_past_dates
+                        send_past_dates=send_past_dates,
+                        dry_run=dry_run,
+                        allow_resend=allow_resend
                     )
                     
                     if result == "sent":
                         results["sent"] += 1
+                        results["would_send"] += 1
+                    elif result == "dry_send":
+                        results["would_send"] += 1
                     elif result == "skipped":
                         results["skipped"] += 1
                     elif result == "failed":
@@ -131,11 +189,15 @@ class InvoiceProcessor:
                     results["failed"] += 1
                     results["errors"].append(f"{filename}: {str(e)}")
             
-            db.commit()
+            if dry_run:
+                db.rollback()
+            else:
+                db.commit()
         
         logger.info(
             f"Invoice processing complete: "
-            f"{results['sent']} sent, {results['skipped']} skipped, {results['failed']} failed"
+            f"{results['sent']} sent, {results['skipped']} skipped, {results['failed']} failed, "
+            f"{results['would_send']} would_send"
         )
         
         return results
@@ -150,13 +212,15 @@ class InvoiceProcessor:
         email_template: str,
         today: date,
         force_send: bool,
-        send_past_dates: bool
+        send_past_dates: bool,
+        dry_run: bool,
+        allow_resend: bool
     ) -> str:
         """
         Process a single invoice PDF.
         
         Returns:
-            "sent", "skipped", or "failed"
+            "sent", "skipped", "dry_send", or "failed"
         """
         logger.info(f"Processing invoice: {filename}")
         
@@ -172,15 +236,16 @@ class InvoiceProcessor:
             invoice_data = parse_invoice(BytesIO(pdf_content), filename=filename)
         except ZUGFeRDParseError as e:
             logger.error(f"Failed to parse invoice {filename}: {e}")
-            EmailLog.create(
-                db=db,
-                filename=filename,
-                invoice_date="",
-                recipient_email="",
-                subject=filename.replace(".pdf", ""),
-                status="failed",
-                error_message=f"Parse error: {e}"
-            )
+            if not dry_run:
+                EmailLog.create(
+                    db=db,
+                    filename=filename,
+                    invoice_date="",
+                    recipient_email="",
+                    subject=filename.replace(".pdf", ""),
+                    status="failed",
+                    error_message=f"Parse error: {e}"
+                )
             return "failed"
         
         # Check if we have required data
@@ -188,16 +253,32 @@ class InvoiceProcessor:
         
         if not invoice_data.recipient_email:
             logger.warning(f"No recipient email found in {filename}")
-            EmailLog.create(
-                db=db,
-                filename=filename,
-                invoice_date=invoice_data.invoice_date_str,
-                recipient_email="",
-                subject=subject_text,
-                status="failed",
-                error_message="No recipient email found in invoice"
-            )
+            if not dry_run:
+                EmailLog.create(
+                    db=db,
+                    filename=filename,
+                    invoice_date=invoice_data.invoice_date_str,
+                    recipient_email="",
+                    subject=subject_text,
+                    status="failed",
+                    error_message="No recipient email found in invoice"
+                )
             return "failed"
+
+        # Duplicate protection unless explicitly allowed
+        if not allow_resend:
+            already_sent = (
+                db.query(EmailLog)
+                .filter(
+                    EmailLog.filename == filename,
+                    EmailLog.recipient_email == invoice_data.recipient_email,
+                    EmailLog.status == "sent"
+                )
+                .first()
+            )
+            if already_sent:
+                logger.info(f"Invoice {filename} already sent to {invoice_data.recipient_email}, skipping")
+                return "skipped"
         
         # Check invoice date (skip if not today, unless force_send)
         if not force_send:
@@ -216,6 +297,15 @@ class InvoiceProcessor:
                     f"Invoice date {invoice_data.invoice_date} != today {today} and past sending disabled, skipping {filename}"
                 )
                 return "skipped"
+
+        # Render subject/body placeholders
+        subject_text = render_email_template(subject_text, invoice_data, filename, today)
+        email_body = render_email_template(email_template, invoice_data, filename, today)
+
+        # Dry run: report what would happen without side effects
+        if dry_run:
+            logger.info(f"Dry run: would send {filename} to {invoice_data.recipient_email}")
+            return "dry_send"
         
         # Get mail service with current DB settings
         ms_settings = AppSettings.get_microsoft_settings(db)
@@ -231,7 +321,7 @@ class InvoiceProcessor:
             mail_service.send_email(
                 to_email=invoice_data.recipient_email,
                 subject=subject_text,
-                body=email_template,
+                body=email_body,
                 attachment_content=pdf_content,
                 attachment_name=filename
             )
@@ -285,13 +375,11 @@ class InvoiceProcessor:
             
             # Mark log entry as failed so UI and summary reflect the move problem
             if log_entry:
-                log_entry.status = "failed"
+                log_entry.status = "sent"
                 log_entry.error_message = f"Datei nicht verschoben: {e}"
             
-            # Since email was sent, technically the main task is done, but the file move failed.
-            # If we return "failed", the main loop counts it as failed.
-            # However, we should propagate the error properly.
-            raise Exception(f"Move failed: {e}")
+            # Since email was sent, treat it as sent but keep the warning in the log
+            return "sent"
         
         return "sent"
 
@@ -407,7 +495,7 @@ def reschedule_daily_job(send_time: str):
     logger.info(f"Rescheduled daily job to {hour:02d}:{minute:02d} Europe/Berlin")
 
 
-def run_now() -> dict:
+def run_now(dry_run: bool = False, allow_resend: bool = False, selected_files: Optional[Set[str]] = None) -> dict:
     """
     Manually trigger invoice processing immediately.
     
@@ -416,7 +504,12 @@ def run_now() -> dict:
     """
     logger.info("Manual invoice processing triggered")
     processor = get_processor()
-    return processor.process_invoices(force_send=True)
+    return processor.process_invoices(
+        force_send=True,
+        dry_run=dry_run,
+        allow_resend=allow_resend,
+        selected_files=selected_files
+    )
 
 
 def get_next_run_time() -> Optional[datetime]:

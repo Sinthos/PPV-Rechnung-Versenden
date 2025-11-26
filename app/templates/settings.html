@@ -49,11 +49,11 @@
 </div>
 
 <!-- Scheduler Status -->
-<div class="card">
-    <h3>⏰ Zeitplan</h3>
-    <div class="status-box">
-        {% if next_run %}
-        <p><strong>Nächste Ausführung:</strong> {{ next_run|format_datetime }}</p>
+    <div class="card">
+        <h3>⏰ Zeitplan</h3>
+        <div class="status-box">
+            {% if next_run %}
+            <p><strong>Nächste Ausführung:</strong> {{ next_run|format_datetime }}</p>
         {% else %}
         <p>⚠️ Scheduler nicht aktiv</p>
         {% endif %}
@@ -62,6 +62,9 @@
     <form action="/run-now" method="post" class="inline-form">
         <button type="submit" class="btn btn-primary">
             🚀 Jetzt ausführen
+        </button>
+        <button type="button" class="btn btn-secondary" onclick="runDryRun(this)">
+            🧪 Trockenlauf
         </button>
         <span class="hint">Verarbeitet alle Rechnungen im Quellordner (unabhängig vom Datum)</span>
     </form>
@@ -687,6 +690,35 @@ function toggleStorageSettings() {
     } else {
         smbSettings.style.display = 'none';
     }
+}
+
+function runDryRun(btn) {
+    const button = btn || null;
+    const originalText = button ? button.innerHTML : '';
+    if (button) {
+        button.disabled = true;
+        button.innerHTML = '⏳ Prüfe...';
+    }
+
+    fetch('/api/run-dry', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                const res = data.results || {};
+                alert(`🧪 Trockenlauf: ${res.would_send || 0} würden gesendet, ${res.skipped || 0} übersprungen, ${res.failed || 0} Fehler.`);
+            } else {
+                alert('❌ Trockenlauf fehlgeschlagen.');
+            }
+        })
+        .catch(err => {
+            alert('❌ Fehler beim Trockenlauf: ' + err.message);
+        })
+        .finally(() => {
+            if (button) {
+                button.disabled = false;
+                button.innerHTML = originalText;
+            }
+        });
 }
 
 // Initial state

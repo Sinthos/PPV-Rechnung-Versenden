@@ -6,6 +6,7 @@ Allows the application to work transparently with files regardless of their loca
 import os
 import shutil
 import logging
+import time
 from abc import ABC, abstractmethod
 from typing import List, Dict, Union, Any, Optional
 from pathlib import Path
@@ -174,6 +175,24 @@ class SMBFileSystem(FileSystemProvider):
             logger.error(f"Failed to register SMB session: {e}")
             raise
 
+    def _with_retries(self, func, *args, retries: int = 3, delay: float = 0.5, **kwargs):
+        """Execute func with simple retry/backoff to stabilize flaky SMB calls."""
+        last_exc = None
+        for attempt in range(retries):
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                last_exc = e
+                if attempt < retries - 1:
+                    # Clear cached connections and back off
+                    try:
+                        smbclient.reset_connection_cache()
+                    except Exception:
+                        pass
+                    time.sleep(delay * (attempt + 1))
+                    continue
+                raise last_exc
+
     def _join_unc(self, base: str, name: str) -> str:
         """Join UNC paths without relying on smbclient.path.join (not available)."""
         base_clean = base.rstrip("\\")
@@ -209,8 +228,8 @@ class SMBFileSystem(FileSystemProvider):
     def list_directories(self, path: str) -> List[Dict[str, Any]]:
         rel_path = self._normalize_rel_path(path)
         full_path = self._get_smb_path(rel_path)
-        result = []
-        try:
+        def _list():
+            result = []
             for filename in smbclient.listdir(full_path):
                 file_path = self._join_unc(full_path, filename)
                 if smbclient.path.isdir(file_path):
@@ -223,6 +242,10 @@ class SMBFileSystem(FileSystemProvider):
                         "access_denied": False
                     })
             result.sort(key=lambda x: x["name"].lower())
+            return result
+
+        try:
+            return self._with_retries(_list)
         except SMBResponseException as e:
             logger.error(f"SMB list error at {full_path}: {e}")
             # Surface access issues to the caller instead of silently hiding them
@@ -233,21 +256,19 @@ class SMBFileSystem(FileSystemProvider):
             logger.error(f"SMB list error: {e}")
             raise
 
-        return result
-
     def create_directory(self, path: str) -> None:
-        smbclient.makedirs(self._get_smb_path(path), exist_ok=True)
+        self._with_retries(smbclient.makedirs, self._get_smb_path(path), exist_ok=True)
         
     def exists(self, path: str) -> bool:
         try:
-            return smbclient.path.exists(self._get_smb_path(path))
-        except:
+            return bool(self._with_retries(smbclient.path.exists, self._get_smb_path(path)))
+        except Exception:
             return False
             
     def is_dir(self, path: str) -> bool:
         try:
-            return smbclient.path.isdir(self._get_smb_path(path))
-        except:
+            return bool(self._with_retries(smbclient.path.isdir, self._get_smb_path(path)))
+        except Exception:
             return False
             
     def list_files(self, path: str, pattern: str = "*") -> List[str]:
@@ -256,9 +277,13 @@ class SMBFileSystem(FileSystemProvider):
         files = []
         try:
             import fnmatch
-            for filename in smbclient.listdir(full_path):
-                if fnmatch.fnmatch(filename, pattern):
-                    files.append(os.path.join(self._normalize_rel_path(path), filename)) # Return 'relative' path for internal use
+            def _list():
+                local_files = []
+                for filename in smbclient.listdir(full_path):
+                    if fnmatch.fnmatch(filename, pattern):
+                        local_files.append(os.path.join(self._normalize_rel_path(path), filename)) # Return 'relative' path for internal use
+                return local_files
+            files = self._with_retries(_list)
         except Exception as e:
             logger.error(f"SMB list files error: {e}")
             
@@ -273,31 +298,32 @@ class SMBFileSystem(FileSystemProvider):
         src_full = self._get_smb_path(src)
         dst_full = self._get_smb_path(dst)
         
-        # Ensure dest dir exists
-        # Use split to get directory since smbclient.path might not have dirname
-        dst_dir = "\\".join(dst_full.split("\\")[:-1])
-        if not smbclient.path.exists(dst_dir):
-            smbclient.makedirs(dst_dir)
-        
-        try:
-            # If target exists, remove it to avoid rename errors
-            if smbclient.path.exists(dst_full):
-                smbclient.remove(dst_full)
-            smbclient.rename(src_full, dst_full)
-        except Exception as e:
-            logger.error(f"SMB rename failed {src_full} -> {dst_full}: {e}, trying copy/delete fallback.")
-            # Fallback: copy then delete
+        def _move():
+            # Ensure dest dir exists
+            # Use split to get directory since smbclient.path might not have dirname
+            dst_dir = "\\".join(dst_full.split("\\")[:-1])
+            if not smbclient.path.exists(dst_dir):
+                smbclient.makedirs(dst_dir)
+            
             try:
+                # If target exists, remove it to avoid rename errors
+                if smbclient.path.exists(dst_full):
+                    smbclient.remove(dst_full)
+                smbclient.rename(src_full, dst_full)
+            except Exception as e:
+                logger.error(f"SMB rename failed {src_full} -> {dst_full}: {e}, trying copy/delete fallback.")
+                # Fallback: copy then delete
                 with smbclient.open_file(src_full, mode='rb') as src_f, smbclient.open_file(dst_full, mode='wb') as dst_f:
                     shutil.copyfileobj(src_f, dst_f)
                 smbclient.remove(src_full)
-            except Exception as e2:
-                logger.error(f"SMB copy/delete fallback failed {src_full} -> {dst_full}: {e2}")
-                raise
+
+        self._with_retries(_move)
         
     def read_file(self, path: str) -> bytes:
-        with smbclient.open_file(self._get_smb_path(path), mode='rb') as f:
-            return f.read()
+        def _read():
+            with smbclient.open_file(self._get_smb_path(path), mode='rb') as f:
+                return f.read()
+        return self._with_retries(_read)
             
     def get_full_path(self, path: str) -> str:
         return self._get_smb_path(path)

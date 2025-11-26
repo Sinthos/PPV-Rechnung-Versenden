@@ -8,6 +8,18 @@
     <p class="subtitle">Letzte 100 versendete E-Mails</p>
 </div>
 
+{% if message %}
+<div class="alert alert-success">
+    ✅ {{ message }}
+</div>
+{% endif %}
+
+{% if error %}
+<div class="alert alert-error">
+    ❌ {{ error }}
+</div>
+{% endif %}
+
 {% if logs %}
 <div class="card">
     <div class="table-container">
@@ -20,6 +32,7 @@
                     <th>Empfänger</th>
                     <th>Betreff</th>
                     <th>Status</th>
+                    <th>Aktion</th>
                 </tr>
             </thead>
             <tbody>
@@ -41,10 +54,15 @@
                         </span>
                         {% endif %}
                     </td>
+                    <td>
+                        <form action="/logs/{{ log.id }}/resend" method="post">
+                            <button type="submit" class="btn btn-small btn-secondary">🔁 Erneut senden</button>
+                        </form>
+                    </td>
                 </tr>
                 {% if (log.status == 'failed' and log.error_message) or (log.status == 'sent' and log.error_message) %}
                 <tr class="row-error-detail">
-                    <td colspan="6">
+                    <td colspan="7">
                         <div class="error-detail">
                             <strong>Hinweis:</strong> {{ log.error_message }}
                         </div>

@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, date
 from pathlib import Path
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Union, BinaryIO
 from io import BytesIO
 
 import pikepdf
@@ -58,12 +58,12 @@ ZUGFERD_XML_FILENAMES = [
 ]
 
 
-def extract_xml_from_pdf(pdf_path: Path) -> Optional[str]:
+def extract_xml_from_pdf(pdf_source: Union[Path, str, BinaryIO]) -> Optional[str]:
     """
     Extract embedded ZUGFeRD/Factur-X XML from a PDF file.
     
     Args:
-        pdf_path: Path to the PDF file
+        pdf_source: Path to the PDF file or file-like object
         
     Returns:
         XML content as string, or None if not found
@@ -72,7 +72,8 @@ def extract_xml_from_pdf(pdf_path: Path) -> Optional[str]:
         ZUGFeRDParseError: If PDF cannot be read or processed
     """
     try:
-        with pikepdf.open(pdf_path) as pdf:
+        # pikepdf.open handles paths and file-like objects
+        with pikepdf.open(pdf_source) as pdf:
             # Check for embedded files in the PDF
             if '/Names' not in pdf.Root:
                 logger.debug(f"No /Names in PDF root: {pdf_path}")
@@ -346,12 +347,13 @@ def parse_buyer_name(xml_content: str) -> Optional[str]:
         return None
 
 
-def parse_invoice(pdf_path: Path) -> InvoiceData:
+def parse_invoice(pdf_source: Union[Path, str, BinaryIO], filename: str = "") -> InvoiceData:
     """
     Parse a ZUGFeRD/Factur-X invoice PDF and extract relevant data.
     
     Args:
-        pdf_path: Path to the PDF invoice file
+        pdf_source: Path to the PDF invoice file or file-like object
+        filename: Optional filename for logging/identification
         
     Returns:
         InvoiceData object with parsed information
@@ -359,12 +361,13 @@ def parse_invoice(pdf_path: Path) -> InvoiceData:
     Raises:
         ZUGFeRDParseError: If parsing fails
     """
-    logger.info(f"Parsing invoice: {pdf_path}")
+    log_name = filename or str(pdf_source)
+    logger.info(f"Parsing invoice: {log_name}")
     
     # Extract XML from PDF
-    xml_content = extract_xml_from_pdf(pdf_path)
+    xml_content = extract_xml_from_pdf(pdf_source)
     if not xml_content:
-        raise ZUGFeRDParseError(f"No ZUGFeRD XML found in PDF: {pdf_path}")
+        raise ZUGFeRDParseError(f"No ZUGFeRD XML found in PDF: {log_name}")
     
     # Parse invoice date
     invoice_date, invoice_date_str = parse_invoice_date(xml_content)

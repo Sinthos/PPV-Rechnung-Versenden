@@ -188,6 +188,10 @@
                 <label for="smb_domain">Domain (Optional)</label>
                 <input type="text" id="smb_domain" name="smb_domain" value="{{ settings.smb_domain }}" placeholder="WORKGROUP">
             </div>
+            
+            <button type="button" class="btn btn-secondary" onclick="testSMBConnection()">
+                🔍 SMB Verbindung testen
+            </button>
         </div>
         
         <div class="form-group">
@@ -457,6 +461,41 @@ function testConnection() {
     })
     .catch(error => {
         alert('❌ Fehler:\n\n' + error.message);
+    })
+    .finally(() => {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    });
+}
+
+function testSMBConnection() {
+    const btn = event.target;
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '⏳ Teste...';
+    btn.disabled = true;
+
+    // Get SMB fields directly
+    const formData = new FormData();
+    formData.append('host', document.getElementById('smb_host').value);
+    formData.append('share', document.getElementById('smb_share').value);
+    formData.append('username', document.getElementById('smb_username').value);
+    formData.append('password', document.getElementById('smb_password').value);
+    formData.append('domain', document.getElementById('smb_domain').value);
+
+    fetch('/api/smb/test', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            alert('✅ ' + data.message);
+        } else {
+            alert('❌ ' + data.message);
+        }
+    })
+    .catch(error => {
+        alert('❌ Kommunikationsfehler:\n\n' + error.message);
     })
     .finally(() => {
         btn.innerHTML = originalText;

@@ -5,9 +5,11 @@ Handles daily scheduled invoice processing and manual triggers.
 
 import logging
 import shutil
+import os
 from datetime import date, datetime
 from pathlib import Path
 from typing import Optional, Callable
+from io import BytesIO
 
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -17,8 +19,8 @@ from apscheduler.jobstores.base import JobLookupError
 from app.config import get_settings
 from app.database import get_db_session
 from app.models import AppSettings, EmailLog
+from app.filesystem import get_filesystem, FileSystemProvider
 from app.invoice_parser import (
-    find_invoice_files,
     parse_invoice,
     ZUGFeRDParseError,
     InvoiceData
@@ -66,31 +68,49 @@ class InvoiceProcessor:
         with get_db_session() as db:
             # Get current settings
             app_settings = AppSettings.get_all_settings(db)
-            source_folder = Path(app_settings[AppSettings.KEY_SOURCE_FOLDER])
-            target_folder = Path(app_settings[AppSettings.KEY_TARGET_FOLDER])
+            
+            # Use filesystem abstraction
+            fs = get_filesystem(app_settings)
+            
+            source_folder = app_settings[AppSettings.KEY_SOURCE_FOLDER]
+            target_folder = app_settings[AppSettings.KEY_TARGET_FOLDER]
             email_template = app_settings[AppSettings.KEY_EMAIL_TEMPLATE]
             
             # Ensure target folder exists
-            target_folder.mkdir(parents=True, exist_ok=True)
+            try:
+                if not fs.exists(target_folder):
+                    fs.create_directory(target_folder)
+            except Exception as e:
+                logger.error(f"Failed to create target folder {target_folder}: {e}")
+                return results
             
             # Find invoice files
-            invoice_files = find_invoice_files(source_folder)
+            try:
+                invoice_files = fs.list_files(source_folder, pattern="RE-*.pdf")
+            except Exception as e:
+                logger.error(f"Failed to list files in {source_folder}: {e}")
+                return results
             
             if not invoice_files:
-                logger.info("No invoice files found to process")
+                logger.info(f"No invoice files found in {source_folder}")
                 return results
+            
+            logger.info(f"Found {len(invoice_files)} invoice files to process")
             
             # Get today's date in Berlin timezone
             today = datetime.now(TIMEZONE).date()
             logger.info(f"Today's date (Europe/Berlin): {today}")
             
-            for pdf_path in invoice_files:
+            for file_path in invoice_files:
                 results["processed"] += 1
+                filename = os.path.basename(file_path)
                 
                 try:
                     result = self._process_single_invoice(
                         db=db,
-                        pdf_path=pdf_path,
+                        fs=fs,
+                        file_path=file_path,
+                        filename=filename,
                         target_folder=target_folder,
                         email_template=email_template,
                         today=today,
@@ -105,9 +125,9 @@ class InvoiceProcessor:
                         results["failed"] += 1
                         
                 except Exception as e:
-                    logger.error(f"Unexpected error processing {pdf_path}: {e}")
+                    logger.error(f"Unexpected error processing {filename}: {e}")
                     results["failed"] += 1
-                    results["errors"].append(f"{pdf_path.name}: {str(e)}")
+                    results["errors"].append(f"{filename}: {str(e)}")
             
             db.commit()
         
@@ -121,8 +141,10 @@ class InvoiceProcessor:
     def _process_single_invoice(
         self,
         db,
-        pdf_path: Path,
-        target_folder: Path,
+        fs: FileSystemProvider,
+        file_path: str,
+        filename: str,
+        target_folder: str,
         email_template: str,
         today: date,
         force_send: bool
@@ -133,12 +155,18 @@ class InvoiceProcessor:
         Returns:
             "sent", "skipped", or "failed"
         """
-        filename = pdf_path.name
         logger.info(f"Processing invoice: {filename}")
         
+        # Read file content
+        try:
+            pdf_content = fs.read_file(file_path)
+        except Exception as e:
+            logger.error(f"Failed to read file {filename}: {e}")
+            return "failed"
+            
         # Parse the invoice
         try:
-            invoice_data = parse_invoice(pdf_path)
+            invoice_data = parse_invoice(BytesIO(pdf_content), filename=filename)
         except ZUGFeRDParseError as e:
             logger.error(f"Failed to parse invoice {filename}: {e}")
             EmailLog.create(
@@ -146,13 +174,15 @@ class InvoiceProcessor:
                 filename=filename,
                 invoice_date="",
                 recipient_email="",
-                subject=pdf_path.stem,
+                subject=filename.replace(".pdf", ""),
                 status="failed",
                 error_message=f"Parse error: {e}"
             )
             return "failed"
         
         # Check if we have required data
+        subject_text = filename.replace(".pdf", "")
+        
         if not invoice_data.recipient_email:
             logger.warning(f"No recipient email found in {filename}")
             EmailLog.create(
@@ -160,7 +190,7 @@ class InvoiceProcessor:
                 filename=filename,
                 invoice_date=invoice_data.invoice_date_str,
                 recipient_email="",
-                subject=pdf_path.stem,
+                subject=subject_text,
                 status="failed",
                 error_message="No recipient email found in invoice"
             )
@@ -191,9 +221,10 @@ class InvoiceProcessor:
         try:
             mail_service.send_email(
                 to_email=invoice_data.recipient_email,
-                subject=pdf_path.stem,
+                subject=subject_text,
                 body=email_template,
-                attachment_path=pdf_path
+                attachment_content=pdf_content,
+                attachment_name=filename
             )
         except GraphMailError as e:
             logger.error(f"Failed to send email for {filename}: {e}")
@@ -202,7 +233,7 @@ class InvoiceProcessor:
                 filename=filename,
                 invoice_date=invoice_data.invoice_date_str,
                 recipient_email=invoice_data.recipient_email,
-                subject=pdf_path.stem,
+                subject=subject_text,
                 status="failed",
                 error_message=f"Send error: {e}"
             )
@@ -214,23 +245,27 @@ class InvoiceProcessor:
             filename=filename,
             invoice_date=invoice_data.invoice_date_str,
             recipient_email=invoice_data.recipient_email,
-            subject=pdf_path.stem,
+            subject=subject_text,
             status="sent"
         )
         
         # Move file to target folder
         try:
-            target_path = target_folder / filename
+            # Construct target path
+            # We use join_path from fs to handle correct separators
+            target_path = fs.join_path(target_folder, filename)
             
-            # Handle duplicate filenames
-            if target_path.exists():
-                base = pdf_path.stem
-                suffix = 1
-                while target_path.exists():
-                    target_path = target_folder / f"{base}_{suffix}.pdf"
-                    suffix += 1
+            # Check for duplicates? fs.exists might work if path is correct
+            # Handling duplicates on SMB without full path manipulation libraries is simpler by just overwriting 
+            # or we can check existence.
+            if fs.exists(target_path):
+                # Simple rename strategy: append timestamp
+                base, ext = os.path.splitext(filename)
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                new_filename = f"{base}_{ts}{ext}"
+                target_path = fs.join_path(target_folder, new_filename)
             
-            shutil.move(str(pdf_path), str(target_path))
+            fs.move_file(file_path, target_path)
             logger.info(f"Moved {filename} to {target_path}")
             
         except Exception as e:

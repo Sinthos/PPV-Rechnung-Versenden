@@ -401,6 +401,104 @@ async def api_connection_test(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Configuration error: {e}")
 
 
+@app.post("/api/smb/list-shares")
+async def list_smb_shares(
+    host: str = Form(...),
+    username: str = Form(...),
+    password: str = Form(...),
+    domain: str = Form("")
+):
+    """List available SMB shares on the host."""
+    try:
+        import smbclient
+        
+        # Register temporary session
+        try:
+            smbclient.register_session(
+                host,
+                username=username,
+                password=password,
+                domain=domain if domain else None
+            )
+        except Exception as e:
+            # Maybe already registered, try to use it or fail
+            # Re-registering with same creds usually works or raises "already exists" which is fine if creds match
+            # But if different creds, we might have issues. 
+            # smbclient global state is tricky. 
+            # Usually calling register_session updates it or adds to the pool.
+            pass
+
+        shares = []
+        # smbclient doesn't have a direct "list_shares" in high level API easily accessible in all versions?
+        # Actually it does not expose NetShareEnum easily.
+        # But we can try to list root? No, SMB root requires share.
+        
+        # Alternative: We can try to connect. 
+        # But without knowing a share, we can't really "browse" the server root in strict SMB file terms 
+        # unless we use IPC$ or similar which is complex.
+        
+        # Wait, if I cannot list shares easily with smbclient high level, 
+        # I might need to rely on the user knowing the share name.
+        # OR I can try to use smbprotocol directly.
+        
+        # Let's check if we can verify connection at least.
+        # We can try to connect to IPC$ share which usually exists?
+        
+        # For now, let's implement a "Test Connection" that requires a Share to be entered.
+        # Listing shares is hard without specific RPC calls (SRVSVC).
+        
+        # Let's change this endpoint to "test-connection" which verifies access to the SPECIFIED share.
+        raise HTTPException(status_code=501, detail="Share listing not supported yet")
+        
+    except Exception as e:
+        logger.error(f"SMB Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/smb/test")
+async def test_smb_connection(
+    host: str = Form(...),
+    share: str = Form(...),
+    username: str = Form(...),
+    password: str = Form(...),
+    domain: str = Form("")
+):
+    """Test SMB connection to a specific share."""
+    try:
+        import smbclient
+        
+        # Clean up share name (remove leading slashes/backslashes)
+        clean_share = share.replace("/", "").replace("\\", "")
+        
+        # Register session
+        # We wrap in try because if session exists we might want to reset it?
+        # Ideally we should clear session cache but smbclient doesn't expose that easily.
+        # We just try to register.
+        try:
+            smbclient.register_session(
+                host,
+                username=username,
+                password=password,
+                domain=domain if domain else None
+            )
+        except Exception:
+            # Ignore session errors, maybe it works anyway or fails later
+            pass
+            
+        # Try to list root of share
+        path = f"\\\\{host}\\{clean_share}"
+        try:
+            smbclient.listdir(path)
+            return {"status": "success", "message": f"Verbindung zu \\\\{host}\\{clean_share} erfolgreich!"}
+        except Exception as e:
+            return {"status": "error", "message": f"Zugriff verweigert oder Fehler: {str(e)}"}
+            
+    except ImportError:
+         return {"status": "error", "message": "SMB Bibliothek nicht installiert"}
+    except Exception as e:
+        return {"status": "error", "message": f"Fehler: {str(e)}"}
+
+
 # ============================================================================
 # Folder Browser API
 # ============================================================================

@@ -6,7 +6,7 @@ Sends emails with PDF attachments using Microsoft Graph API and MSAL.
 import base64
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 import msal
 import requests
@@ -142,8 +142,9 @@ class GraphMailService:
         to_email: str,
         subject: str,
         body: str,
-        attachment_path: Optional[Path] = None,
+        attachment_path: Optional[Union[Path, str]] = None,
         attachment_name: Optional[str] = None,
+        attachment_content: Optional[bytes] = None,
     ) -> dict:
         """
         Send an email using Microsoft Graph API.
@@ -152,8 +153,9 @@ class GraphMailService:
             to_email: Recipient email address
             subject: Email subject
             body: Email body (plain text)
-            attachment_path: Optional path to PDF attachment
+            attachment_path: Optional path to PDF attachment (local file)
             attachment_name: Optional custom name for attachment (defaults to filename)
+            attachment_content: Optional bytes content (overrides reading from path)
             
         Returns:
             API response as dict
@@ -186,22 +188,32 @@ class GraphMailService:
         }
         
         # Add attachment if provided
-        if attachment_path and attachment_path.exists():
-            attachment_content = attachment_path.read_bytes()
-            attachment_base64 = base64.b64encode(attachment_content).decode('utf-8')
-            
-            if attachment_name is None:
-                attachment_name = attachment_path.name
+        final_content = None
+        final_name = attachment_name
+        
+        if attachment_content is not None:
+            final_content = attachment_content
+            if final_name is None:
+                final_name = "invoice.pdf" # Default fallback
+        elif attachment_path:
+            path_obj = Path(attachment_path)
+            if path_obj.exists():
+                final_content = path_obj.read_bytes()
+                if final_name is None:
+                    final_name = path_obj.name
+
+        if final_content:
+            attachment_base64 = base64.b64encode(final_content).decode('utf-8')
             
             message["message"]["attachments"] = [
                 {
                     "@odata.type": "#microsoft.graph.fileAttachment",
-                    "name": attachment_name,
+                    "name": final_name,
                     "contentType": "application/pdf",
                     "contentBytes": attachment_base64
                 }
             ]
-            logger.debug(f"Added attachment: {attachment_name} ({len(attachment_content)} bytes)")
+            logger.debug(f"Added attachment: {final_name} ({len(final_content)} bytes)")
         
         # Send the email
         endpoint = f"{self.GRAPH_API_ENDPOINT}/users/{self.sender_address}/sendMail"

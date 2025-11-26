@@ -81,6 +81,14 @@ class GraphMailService:
                 "Missing Microsoft Graph credentials (tenant_id, client_id, client_secret). "
                 "Please configure them in the web UI or .env."
             )
+            
+        # Check for placeholders
+        if "your-tenant-id" in self.tenant_id.lower() or "your-client-id" in self.client_id.lower():
+            raise GraphMailError(
+                "Invalid configuration: You are using placeholder credentials ('your-tenant-id-here', etc.). "
+                "Please configure your actual Azure AD credentials in the Web UI."
+            )
+            
         authority = f"https://login.microsoftonline.com/{self.tenant_id}"
         return msal.ConfidentialClientApplication(
             client_id=self.client_id,

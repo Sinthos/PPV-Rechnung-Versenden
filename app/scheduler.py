@@ -280,12 +280,18 @@ class InvoiceProcessor:
         except Exception as e:
             logger.error(f"Failed to move {filename} to target folder: {e}")
             # Don't fail the whole operation, email was sent successfully
-            results["errors"].append(f"{filename}: Move failed - {e}")
+            # Note: We cannot access 'results' here as it's not passed to this method.
+            # Instead we return a special status or just log it and rely on the return value.
+            
             # Mark log entry as failed so UI and summary reflect the move problem
             if log_entry:
                 log_entry.status = "failed"
                 log_entry.error_message = f"Datei nicht verschoben: {e}"
-            return "failed"
+            
+            # Since email was sent, technically the main task is done, but the file move failed.
+            # If we return "failed", the main loop counts it as failed.
+            # However, we should propagate the error properly.
+            raise Exception(f"Move failed: {e}")
         
         return "sent"
 

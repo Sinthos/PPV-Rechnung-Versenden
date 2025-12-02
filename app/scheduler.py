@@ -188,6 +188,19 @@ class InvoiceProcessor:
                     logger.error(f"Unexpected error processing {filename}: {e}")
                     results["failed"] += 1
                     results["errors"].append(f"{filename}: {str(e)}")
+                    if not dry_run:
+                        try:
+                            EmailLog.create(
+                                db=db,
+                                filename=filename,
+                                invoice_date="",
+                                recipient_email="",
+                                subject=filename.replace(".pdf", ""),
+                                status="failed",
+                                error_message=f"Unerwarteter Fehler: {e}"
+                            )
+                        except Exception as log_err:
+                            logger.error(f"Could not record failure for {filename}: {log_err}")
             
             if dry_run:
                 db.rollback()
@@ -223,12 +236,23 @@ class InvoiceProcessor:
             "sent", "skipped", "dry_send", or "failed"
         """
         logger.info(f"Processing invoice: {filename}")
+        subject_text = filename.replace(".pdf", "")
         
         # Read file content
         try:
             pdf_content = fs.read_file(file_path)
         except Exception as e:
             logger.error(f"Failed to read file {filename}: {e}")
+            if not dry_run:
+                EmailLog.create(
+                    db=db,
+                    filename=filename,
+                    invoice_date="",
+                    recipient_email="",
+                    subject=subject_text,
+                    status="failed",
+                    error_message=f"Datei konnte nicht gelesen werden: {e}"
+                )
             return "failed"
             
         # Parse the invoice
@@ -249,8 +273,6 @@ class InvoiceProcessor:
             return "failed"
         
         # Check if we have required data
-        subject_text = filename.replace(".pdf", "")
-        
         if not invoice_data.recipient_email:
             logger.warning(f"No recipient email found in {filename}")
             if not dry_run:

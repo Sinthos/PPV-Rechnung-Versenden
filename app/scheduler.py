@@ -12,7 +12,6 @@ from typing import Optional, Callable, Set
 from io import BytesIO
 
 import pytz
-from collections import defaultdict
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.jobstores.base import JobLookupError
@@ -37,8 +36,8 @@ TIMEZONE = pytz.timezone('Europe/Berlin')
 DAILY_JOB_ID = "daily_invoice_processing"
 
 
-class _SafeDict(defaultdict):
-    """Default dict that returns empty string for missing keys."""
+class _SafeDict(dict):
+    """Dict that returns empty string for missing keys to simplify template formatting."""
     def __missing__(self, key):
         return ""
 
@@ -54,17 +53,15 @@ def render_email_template(template: str, invoice_data: InvoiceData, filename: st
     if not template:
         return ""
 
-    values = _SafeDict(
-        {
-            "invoice_number": invoice_data.invoice_number or "",
-            "buyer_name": invoice_data.buyer_name or "",
-            "invoice_date": invoice_data.invoice_date_str or "",
-            "invoice_date_iso": invoice_data.invoice_date.isoformat() if invoice_data.invoice_date else "",
-            "recipient_email": invoice_data.recipient_email or "",
-            "filename": filename,
-            "today": today.isoformat(),
-        }
-    )
+    values = _SafeDict({
+        "invoice_number": invoice_data.invoice_number or "",
+        "buyer_name": invoice_data.buyer_name or "",
+        "invoice_date": invoice_data.invoice_date_str or "",
+        "invoice_date_iso": invoice_data.invoice_date.isoformat() if invoice_data.invoice_date else "",
+        "recipient_email": invoice_data.recipient_email or "",
+        "filename": filename,
+        "today": today.isoformat(),
+    })
 
     try:
         return template.format_map(values)

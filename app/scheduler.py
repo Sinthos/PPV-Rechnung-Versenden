@@ -185,7 +185,7 @@ class InvoiceProcessor:
                         results["failed"] += 1
                         
                 except Exception as e:
-                    logger.error(f"Unexpected error processing {filename}: {e}")
+                    logger.exception(f"Unexpected error processing {filename}: {e}")
                     results["failed"] += 1
                     results["errors"].append(f"{filename}: {str(e)}")
                     if not dry_run:
@@ -197,7 +197,7 @@ class InvoiceProcessor:
                                 recipient_email="",
                                 subject=filename.replace(".pdf", ""),
                                 status="failed",
-                                error_message=f"Unerwarteter Fehler: {e}"
+                                error_message=f"Unerwarteter Fehler ({type(e).__name__}): {e}"
                             )
                         except Exception as log_err:
                             logger.error(f"Could not record failure for {filename}: {log_err}")
@@ -357,6 +357,19 @@ class InvoiceProcessor:
                 subject=subject_text,
                 status="failed",
                 error_message=f"Send error: {e}"
+            )
+            return "failed"
+        except Exception as e:
+            # Catch-all to surface unexpected errors with stack trace
+            logger.exception(f"Unexpected send error for {filename}: {e}")
+            EmailLog.create(
+                db=db,
+                filename=filename,
+                invoice_date=invoice_data.invoice_date_str,
+                recipient_email=invoice_data.recipient_email,
+                subject=subject_text,
+                status="failed",
+                error_message=f"Unerwarteter Send-Fehler ({type(e).__name__}): {e}"
             )
             return "failed"
         

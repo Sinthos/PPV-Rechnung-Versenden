@@ -108,8 +108,12 @@ class InvoiceProcessor:
             "skipped": 0,
             "failed": 0,
             "would_send": 0,
-            "errors": []
+            "errors": [],
         }
+        error_summary = {}
+
+        def record_error(key: str):
+            error_summary[key] = error_summary.get(key, 0) + 1
         
         with get_db_session() as db:
             # Get current settings
@@ -122,7 +126,29 @@ class InvoiceProcessor:
             target_folder = app_settings[AppSettings.KEY_TARGET_FOLDER]
             email_template = app_settings[AppSettings.KEY_EMAIL_TEMPLATE]
             send_past_dates = str(app_settings.get(AppSettings.KEY_SEND_PAST_DATES, "false")).lower() == "true"
-            
+            ms_settings = AppSettings.get_microsoft_settings(db)
+            mail_service = None
+            mail_init_error: Optional[Exception] = None
+
+            if not dry_run:
+                if not (ms_settings["tenant_id"] and ms_settings["client_id"] and ms_settings["client_secret"] and ms_settings["sender_address"]):
+                    mail_init_error = GraphMailError(
+                        "Microsoft Graph credentials are not configured. "
+                        "Please configure Tenant ID, Client ID, Client Secret und Absenderadresse in den Einstellungen."
+                    )
+                    logger.error(mail_init_error)
+                else:
+                    try:
+                        mail_service = GraphMailService(
+                            tenant_id=ms_settings["tenant_id"],
+                            client_id=ms_settings["client_id"],
+                            client_secret=ms_settings["client_secret"],
+                            sender_address=ms_settings["sender_address"],
+                        )
+                    except Exception as e:
+                        mail_init_error = e
+                        logger.error(f"Failed to initialize mail service: {e}")
+
             # Ensure target folder exists
             try:
                 if not fs.exists(target_folder):
@@ -168,7 +194,10 @@ class InvoiceProcessor:
                         force_send=force_send,
                         send_past_dates=send_past_dates,
                         dry_run=dry_run,
-                        allow_resend=allow_resend
+                        allow_resend=allow_resend,
+                        mail_service=mail_service,
+                        mail_init_error=mail_init_error,
+                        record_error=record_error,
                     )
                     
                     if result == "sent":
@@ -185,6 +214,7 @@ class InvoiceProcessor:
                     logger.exception(f"Unexpected error processing {filename}: {e}")
                     results["failed"] += 1
                     results["errors"].append(f"{filename}: {str(e)}")
+                    record_error("unexpected")
                     if not dry_run:
                         try:
                             EmailLog.create(
@@ -204,11 +234,16 @@ class InvoiceProcessor:
             else:
                 db.commit()
         
+        results["error_summary"] = error_summary
+
         logger.info(
             f"Invoice processing complete: "
             f"{results['sent']} sent, {results['skipped']} skipped, {results['failed']} failed, "
             f"{results['would_send']} would_send"
         )
+        if error_summary:
+            summary_str = ", ".join(f"{k}={v}" for k, v in sorted(error_summary.items()))
+            logger.info(f"Error summary: {summary_str}")
         
         return results
     
@@ -224,7 +259,10 @@ class InvoiceProcessor:
         force_send: bool,
         send_past_dates: bool,
         dry_run: bool,
-        allow_resend: bool
+        allow_resend: bool,
+        mail_service: Optional[GraphMailService],
+        mail_init_error: Optional[Exception],
+        record_error: Optional[Callable[[str], None]],
     ) -> str:
         """
         Process a single invoice PDF.
@@ -234,12 +272,17 @@ class InvoiceProcessor:
         """
         logger.info(f"Processing invoice: {filename}")
         subject_text = filename.replace(".pdf", "")
+
+        def mark_error(key: str):
+            if record_error:
+                record_error(key)
         
         # Read file content
         try:
             pdf_content = fs.read_file(file_path)
         except Exception as e:
             logger.error(f"Failed to read file {filename}: {e}")
+            mark_error("read_error")
             if not dry_run:
                 EmailLog.create(
                     db=db,
@@ -257,6 +300,7 @@ class InvoiceProcessor:
             invoice_data = parse_invoice(BytesIO(pdf_content), filename=filename)
         except ZUGFeRDParseError as e:
             logger.error(f"Failed to parse invoice {filename}: {e}")
+            mark_error("parse_error")
             if not dry_run:
                 EmailLog.create(
                     db=db,
@@ -272,6 +316,7 @@ class InvoiceProcessor:
         # Check if we have required data
         if not invoice_data.recipient_email:
             logger.warning(f"No recipient email found in {filename}")
+            mark_error("missing_recipient")
             if not dry_run:
                 EmailLog.create(
                     db=db,
@@ -327,13 +372,19 @@ class InvoiceProcessor:
             return "dry_send"
         
         # Get mail service with current DB settings
-        ms_settings = AppSettings.get_microsoft_settings(db)
-        mail_service = GraphMailService(
-            tenant_id=ms_settings['tenant_id'],
-            client_id=ms_settings['client_id'],
-            client_secret=ms_settings['client_secret'],
-            sender_address=ms_settings['sender_address']
-        )
+        if mail_init_error is not None:
+            logger.error(f"Mail service unavailable for {filename}: {mail_init_error}")
+            mark_error("mail_service_init")
+            EmailLog.create(
+                db=db,
+                filename=filename,
+                invoice_date=invoice_data.invoice_date_str,
+                recipient_email=invoice_data.recipient_email,
+                subject=subject_text,
+                status="failed",
+                error_message=f"Send error: {mail_init_error}"
+            )
+            return "failed"
         
         # Send the email
         try:
@@ -346,6 +397,7 @@ class InvoiceProcessor:
             )
         except GraphMailError as e:
             logger.error(f"Failed to send email for {filename}: {e}")
+            mark_error("send_graph_error")
             EmailLog.create(
                 db=db,
                 filename=filename,
@@ -359,6 +411,7 @@ class InvoiceProcessor:
         except Exception as e:
             # Catch-all to surface unexpected errors with stack trace
             logger.exception(f"Unexpected send error for {filename}: {e}")
+            mark_error("send_unexpected_error")
             EmailLog.create(
                 db=db,
                 filename=filename,

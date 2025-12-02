@@ -76,12 +76,12 @@ def extract_xml_from_pdf(pdf_source: Union[Path, str, BinaryIO]) -> Optional[str
         with pikepdf.open(pdf_source) as pdf:
             # Check for embedded files in the PDF
             if '/Names' not in pdf.Root:
-                logger.debug(f"No /Names in PDF root: {pdf_path}")
+                logger.debug(f"No /Names in PDF root: {pdf_source}")
                 return None
             
             names = pdf.Root['/Names']
             if '/EmbeddedFiles' not in names:
-                logger.debug(f"No /EmbeddedFiles in PDF: {pdf_path}")
+                logger.debug(f"No /EmbeddedFiles in PDF: {pdf_source}")
                 return None
             
             embedded_files = names['/EmbeddedFiles']
@@ -96,7 +96,7 @@ def extract_xml_from_pdf(pdf_source: Union[Path, str, BinaryIO]) -> Optional[str
                     if '/Names' in kid:
                         files_array.extend(kid['/Names'])
             else:
-                logger.debug(f"No embedded files array found: {pdf_path}")
+                logger.debug(f"No embedded files array found: {pdf_source}")
                 return None
             
             # Iterate through embedded files (name, filespec pairs)
@@ -116,7 +116,7 @@ def extract_xml_from_pdf(pdf_source: Union[Path, str, BinaryIO]) -> Optional[str
                         xml_content = xml_bytes.decode('utf-8')
                         return xml_content
             
-            logger.debug(f"No ZUGFeRD XML found in embedded files: {pdf_path}")
+            logger.debug(f"No ZUGFeRD XML found in embedded files: {pdf_source}")
             return None
             
     except pikepdf.PdfError as e:
